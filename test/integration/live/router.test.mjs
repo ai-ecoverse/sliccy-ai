@@ -15,9 +15,9 @@ test('serves seven from the version under test', async () => {
 });
 
 test('answers 404 for a host nobody published', async () => {
-  const response = await get(`https://nobody-${Date.now().toString(36)}.sliccy.ai/`);
+  const response = await deployed(`https://nobody-${Date.now().toString(36)}.sliccy.ai/`);
   assert.equal(response.status, 404);
-  assert.ok(response.headers.get('x-sliccy-ai-version'));
+  if (version) assert.equal(response.headers.get('x-sliccy-ai-version'), version);
 });
 
 test('answers conditional requests', async () => {
