@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sliccy-ai",
+  "main": "src/router.js",
+  "account_id": "155ec15a52a18a14801e04b019da5e5a",
+  "compatibility_date": "2026-07-30",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "*.sliccy.ai/*", "zone_name": "sliccy.ai" }],
+  "r2_buckets": [{ "binding": "BIOS", "bucket_name": "slicc-bios" }]
+}
