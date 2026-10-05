@@ -19,25 +19,31 @@ function failed(headers, object) {
 function key(url) {
   const label = url.hostname.split('.')[0];
   const path = url.pathname.endsWith('/') ? `${url.pathname}index.html` : url.pathname;
-  return `${label}${path}`;
+  return `${label === 'seven' ? label : `branches/${label}`}${path}`;
+}
+
+async function serve(request, env) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
+  }
+  const name = key(new URL(request.url));
+  const object = await env.BIOS.get(name, { onlyIf: request.headers });
+  if (!object) return new Response('not found', { status: 404 });
+  const headers = {
+    'content-type': types[name.split('.').pop()] ?? 'application/octet-stream',
+    'cache-control': 'no-cache',
+    etag: object.httpEtag,
+  };
+  if (!('body' in object)) {
+    return new Response(null, { status: failed(request.headers, object), headers });
+  }
+  return new Response(request.method === 'HEAD' ? null : object.body, { headers });
 }
 
 export default {
   async fetch(request, env) {
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
-    }
-    const name = key(new URL(request.url));
-    const object = await env.BIOS.get(name, { onlyIf: request.headers });
-    if (!object) return new Response('not found', { status: 404 });
-    const headers = {
-      'content-type': types[name.split('.').pop()] ?? 'application/octet-stream',
-      'cache-control': 'no-cache',
-      etag: object.httpEtag,
-    };
-    if (!('body' in object)) {
-      return new Response(null, { status: failed(request.headers, object), headers });
-    }
-    return new Response(request.method === 'HEAD' ? null : object.body, { headers });
+    const response = await serve(request, env);
+    response.headers.set('x-sliccy-ai-version', env.VERSION.id);
+    return response;
   },
 };
