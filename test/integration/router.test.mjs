@@ -13,6 +13,7 @@ const worker = new Miniflare({
   scriptPath: fileURLToPath(new URL(config.main, root)),
   compatibilityDate: config.compatibility_date,
   r2Buckets: [binding],
+  bindings: { [config.version_metadata.binding]: { id: 'local' } },
 });
 after(() => worker.dispose());
 
@@ -21,7 +22,9 @@ await bucket.put('seven/index.html', '<!doctype html><title>seven</title>');
 await bucket.put('seven/bios.js', 'export {};');
 await bucket.put('seven/packages/package-lock.json', '{}');
 await bucket.put('seven.json', '{"branch":"main","files":["index.html"]}');
-await bucket.put('feat-shell/index.html', '<!doctype html><title>branch</title>');
+await bucket.put('branches/feat-shell/index.html', '<!doctype html><title>branch</title>');
+await bucket.put('branches/feat-shell.json', '{"branch":"feat/shell","files":["index.html"]}');
+await bucket.put('feat-shell/index.html', '<!doctype html><title>old layout</title>');
 
 const get = (url, init) => worker.dispatchFetch(url, init);
 
@@ -34,6 +37,26 @@ test('serves each host from its own prefix', async () => {
 
   const branch = await get('https://feat-shell.sliccy.ai/index.html');
   assert.match(await branch.text(), /branch/);
+});
+
+test('serves branches from branches/ and only seven from the top level', async () => {
+  const branch = await get('https://feat-shell.sliccy.ai/');
+  assert.match(await branch.text(), /<title>branch</);
+  const top = await get('https://branches.sliccy.ai/feat-shell/index.html');
+  await top.arrayBuffer();
+  assert.equal(top.status, 404);
+});
+
+test('names the worker version on every response', async () => {
+  for (const [url, init] of [
+    ['https://seven.sliccy.ai/', {}],
+    ['https://nobody.sliccy.ai/', {}],
+    ['https://seven.sliccy.ai/', { method: 'POST', body: 'x' }],
+  ]) {
+    const response = await get(url, init);
+    await response.arrayBuffer();
+    assert.equal(response.headers.get('x-sliccy-ai-version'), 'local', url);
+  }
 });
 
 test('picks the content type from the extension', async () => {
@@ -53,6 +76,7 @@ test('answers 404 for unknown hosts, files and manifests', async () => {
     'https://seven.sliccy.ai/missing.js',
     'https://feat-shell.sliccy.ai/bios.js',
     'https://seven.sliccy.ai/../seven.json',
+    'https://feat-shell.sliccy.ai/../feat-shell.json',
   ]) {
     const response = await get(url);
     await response.arrayBuffer();
