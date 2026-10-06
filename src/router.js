@@ -22,11 +22,27 @@ function key(url) {
   return `${label === 'seven' ? label : `branches/${label}`}${path}`;
 }
 
+async function fonts(url, request) {
+  const upstream = await fetch(new URL(url.pathname, 'https://www.sliccy.ai'), {
+    method: request.method,
+  });
+  const type = upstream.headers.get('content-type') ?? '';
+  if (!upstream.ok || !type.startsWith('font/')) {
+    await upstream.body?.cancel();
+    return new Response('not found', { status: 404 });
+  }
+  return new Response(upstream.body, {
+    headers: { 'content-type': type, 'cache-control': 'public, max-age=86400' },
+  });
+}
+
 async function serve(request, env) {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
   }
-  const name = key(new URL(request.url));
+  const url = new URL(request.url);
+  if (url.pathname.startsWith('/fonts/')) return fonts(url, request);
+  const name = key(url);
   const object = await env.BIOS.get(name, { onlyIf: request.headers });
   if (!object) return new Response('not found', { status: 404 });
   const headers = {

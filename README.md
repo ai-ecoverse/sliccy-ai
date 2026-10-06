@@ -16,6 +16,8 @@ Each host is its own origin, so a branch gets its own OPFS and service worker an
 - answers 404 for anything missing and 405 for methods other than GET and HEAD;
 - names the worker version that answered in `x-sliccy-ai-version`.
 
+`/fonts/*` on every host is passed through to `https://www.sliccy.ai/fonts/*`, where SLICC v6 serves Adobe Clean. That makes the fonts same-origin for the new UI, which can't load them cross-origin because v6 sends no CORS headers. Only `font/*` responses pass through (anything else is a 404), and they're cached for a day.
+
 `www.sliccy.ai` and `sliccy.ai` have more specific routes to `slicc-tray-hub` (SLICC v6), so they never reach this worker, and `*.` doesn't match the bare domain. A proxied wildcard record `AAAA *.sliccy.ai 100::` makes every other subdomain resolve.
 
 The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. The router never serves a manifest, because every key it builds has a `/` after the label.

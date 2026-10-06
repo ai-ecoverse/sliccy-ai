@@ -8,12 +8,19 @@ const root = new URL('../../', import.meta.url);
 const config = JSON.parse(readFileSync(new URL('wrangler.json', root)));
 const [{ binding }] = config.r2_buckets;
 
+const upstream = [];
 const worker = new Miniflare({
   modules: true,
   scriptPath: fileURLToPath(new URL(config.main, root)),
   compatibilityDate: config.compatibility_date,
   r2Buckets: [binding],
   bindings: { [config.version_metadata.binding]: { id: 'local' } },
+  outboundService: (request) => {
+    upstream.push(`${request.method} ${request.url}`);
+    return request.url.endsWith('.otf')
+      ? new Response('OTTO', { headers: { 'content-type': 'font/otf' } })
+      : new Response('<!doctype html>', { headers: { 'content-type': 'text/html' } });
+  },
 });
 after(() => worker.dispose());
 
@@ -112,6 +119,31 @@ test('answers failed match preconditions with 412', async () => {
     await response.arrayBuffer();
     assert.equal(response.status, status, JSON.stringify(headers));
   }
+});
+
+test('passes fonts through from www.sliccy.ai on every host', async () => {
+  upstream.length = 0;
+  const font = await get('https://seven.sliccy.ai/fonts/AdobeClean-Regular.otf');
+  assert.equal(font.status, 200);
+  assert.equal(font.headers.get('content-type'), 'font/otf');
+  assert.equal(font.headers.get('cache-control'), 'public, max-age=86400');
+  assert.equal(font.headers.get('x-sliccy-ai-version'), 'local');
+  assert.equal(await font.text(), 'OTTO');
+  const branch = await get('https://feat-shell.sliccy.ai/fonts/AdobeClean-Bold.otf', {
+    method: 'HEAD',
+  });
+  await branch.arrayBuffer();
+  assert.equal(branch.status, 200);
+  assert.deepEqual(upstream, [
+    'GET https://www.sliccy.ai/fonts/AdobeClean-Regular.otf',
+    'HEAD https://www.sliccy.ai/fonts/AdobeClean-Bold.otf',
+  ]);
+});
+
+test('answers 404 for anything under /fonts/ that is not a font', async () => {
+  const response = await get('https://seven.sliccy.ai/fonts/site.woff2');
+  assert.equal(response.status, 404);
+  assert.equal(await response.text(), 'not found');
 });
 
 test('rejects writes', async () => {

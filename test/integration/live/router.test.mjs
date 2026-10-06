@@ -29,6 +29,13 @@ test('answers conditional requests', async () => {
   assert.equal((await get(url, { headers: { 'if-match': '"none"' } })).status, 412);
 });
 
+test('passes Adobe Clean through from www.sliccy.ai', async () => {
+  const response = await get(`${seven}fonts/AdobeClean-Regular.otf`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'font/otf');
+  if (version) assert.equal(response.headers.get('x-sliccy-ai-version'), version);
+});
+
 test('rejects writes', async () => {
   const response = await get(seven, { method: 'POST', body: 'x' });
   assert.equal(response.status, 405);
