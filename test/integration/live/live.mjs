@@ -13,10 +13,13 @@ export async function get(url, { headers, ...init } = {}) {
 }
 
 export async function deployed(url) {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  let streak = 0;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
     const response = await get(url);
-    if (!version || response.headers.get('x-sliccy-ai-version') === version) return response;
-    await setTimeout(2000);
+    if (!version) return response;
+    streak = response.headers.get('x-sliccy-ai-version') === version ? streak + 1 : 0;
+    if (streak === 3) return response;
+    await setTimeout(streak ? 250 : 2000);
   }
-  throw new Error(`${url} never answered from version ${version}`);
+  throw new Error(`${url} never answered from version ${version} three times in a row`);
 }

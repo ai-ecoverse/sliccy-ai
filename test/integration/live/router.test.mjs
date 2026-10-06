@@ -7,7 +7,7 @@ const seven = 'https://seven.sliccy.ai/';
 before(() => deployed(seven));
 
 test('serves seven from the version under test', async () => {
-  const response = await get(seven);
+  const response = await deployed(seven);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
   assert.match(await response.text(), /<title>SLICC BIOS<\/title>/);
