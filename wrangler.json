@@ -8,5 +8,6 @@
   "preview_urls": false,
   "routes": [{ "pattern": "*.sliccy.ai/*", "zone_name": "sliccy.ai" }],
   "r2_buckets": [{ "binding": "BIOS", "bucket_name": "slicc-bios" }],
-  "version_metadata": { "binding": "VERSION" }
+  "version_metadata": { "binding": "VERSION" },
+  "services": [{ "binding": "V6", "service": "slicc-tray-hub" }]
 }

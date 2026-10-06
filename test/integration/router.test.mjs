@@ -15,11 +15,13 @@ const worker = new Miniflare({
   compatibilityDate: config.compatibility_date,
   r2Buckets: [binding],
   bindings: { [config.version_metadata.binding]: { id: 'local' } },
-  outboundService: (request) => {
-    upstream.push(`${request.method} ${request.url}`);
-    return request.url.endsWith('.otf')
-      ? new Response('OTTO', { headers: { 'content-type': 'font/otf' } })
-      : new Response('<!doctype html>', { headers: { 'content-type': 'text/html' } });
+  serviceBindings: {
+    [config.services[0].binding]: (request) => {
+      upstream.push(`${request.method} ${request.url}`);
+      return request.url.endsWith('.otf')
+        ? new Response('OTTO', { headers: { 'content-type': 'font/otf' } })
+        : new Response('<!doctype html>', { headers: { 'content-type': 'text/html' } });
+    },
   },
 });
 after(() => worker.dispose());
