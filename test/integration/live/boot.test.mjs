@@ -17,22 +17,14 @@ test('boots seven.sliccy.ai into bash in the terminal', async () => {
   );
   const page = await context.newPage();
   await page.goto('https://seven.sliccy.ai/');
-  await page.waitForFunction(
-    (prompt) =>
-      location.pathname === '/os/' &&
-      document.querySelector('slicc-terminal .term-grid')?.textContent.includes(prompt),
-    prompt,
-    { timeout: 120000 }
-  );
+  const grid = page.locator('slicc-terminal .term-grid');
+  await grid.filter({ hasText: prompt }).waitFor({ timeout: 120000 });
+  assert.equal(await page.evaluate(() => location.pathname), '/os/');
   assert.equal(await page.evaluate(() => crossOriginIsolated), true);
   await page.locator('slicc-terminal').focus();
   await page.keyboard.insertText('echo "sum $((6 * 7))"');
   await page.keyboard.press('Enter');
-  await page.waitForFunction(
-    () => document.querySelector('slicc-terminal .term-grid').textContent.includes('sum 42'),
-    null,
-    { timeout: 30000 }
-  );
+  await grid.filter({ hasText: 'sum 42' }).waitFor({ timeout: 30000 });
   await mkdir(artifacts, { recursive: true });
   await page.screenshot({ path: new URL('seven.png', artifacts).pathname });
   await context.close();
