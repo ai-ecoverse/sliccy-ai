@@ -11,6 +11,7 @@ const [{ binding }] = config.r2_buckets;
 const upstream = [];
 const worker = new Miniflare({
   modules: true,
+  modulesRules: [{ type: 'ESModule', include: ['**/*.js'] }],
   scriptPath: fileURLToPath(new URL(config.main, root)),
   compatibilityDate: config.compatibility_date,
   r2Buckets: [binding],

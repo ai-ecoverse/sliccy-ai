@@ -1,3 +1,5 @@
+import { publish } from './publish.js';
+
 const types = {
   css: 'text/css; charset=utf-8',
   html: 'text/html; charset=utf-8',
@@ -55,6 +57,7 @@ async function tray(url, request, env) {
 async function serve(request, env) {
   const url = new URL(request.url);
   if (TRAY.test(url.pathname)) return tray(url, request, env);
+  if (url.pathname.startsWith('/api/publish/')) return publish(request, env);
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
   }
