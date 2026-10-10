@@ -59,6 +59,15 @@ The workflow needs the `CLOUDFLARE_API_TOKEN` secret, an account token with:
 - Workers Scripts Write on the account;
 - Workers Routes Write and Zone Read on `sliccy.ai`.
 
+That token can change every Worker on the account, SLICC v6's `slicc-tray-hub` included. So it is **not** a repository secret, which any pushed branch could read by changing the workflow. It's stored in two GitHub environments, and the deploy job runs in one of them:
+- **`production`:** used by `main`. Its deployment branch policy allows `main` only, so a branch that names `production` in its workflow is refused before the job starts.
+- **`preview`:** used by every other branch. It requires a reviewer's approval, so a branch's job, and anything its workflow does with the token, waits until a maintainer has looked at it.
+
+To set them up, a repository admin:
+1. creates `production` (deployment branches: selected, `main`) and adds `CLOUDFLARE_API_TOKEN` to it;
+2. creates `preview` (required reviewers: the maintainers; deployment branches: all) and adds `CLOUDFLARE_API_TOKEN` to it;
+3. deletes the repository-level `CLOUDFLARE_API_TOKEN`.
+
 ## Rules
 
 The Biome, lefthook, Renovate and CI configuration comes from [slicc-shared-web](https://github.com/ai-ecoverse/slicc-shared-web):
