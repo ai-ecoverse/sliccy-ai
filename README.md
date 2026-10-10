@@ -25,6 +25,21 @@ The tray hub's leader routes are passed through to `slicc-tray-hub` the same way
 
 The request goes to `https://www.sliccy.ai/<path>`, so the join and controller URLs the hub mints stay on `www.sliccy.ai`, and followers use them there directly. `Cookie` is dropped on the way in and `Set-Cookie` on the way out, so the page's requests and its leader socket carry no ambient credentials. The page swaps the `www.sliccy.ai` host in the controller and WebSocket URLs for its own. Every other tray route, `/join/*` included, stays on `www.sliccy.ai` only.
 
+**Publishing branches without a secret:** `/api/publish/*` on every host lets slicc-bios's branch builds publish with their GitHub Actions OIDC token instead of a Cloudflare token, so a branch never holds a secret that could overwrite `seven/`.
+- **The token:** an RS256 JWT, checked against GitHub's keys (`https://token.actions.githubusercontent.com/.well-known/jwks`, cached for 10 minutes). It has to have:
+  - `iss` `https://token.actions.githubusercontent.com` and `aud` `https://sliccy.ai`;
+  - a valid `exp`, `nbf` and `iat`, with a minute's leeway;
+  - `repository` `ai-ecoverse/slicc-bios`, owned by `ai-ecoverse`;
+  - a `ref` of `refs/heads/<branch>`.
+- **The label comes from the token, not the URL:** `<branch>` maps to `branches/<label>/` by the same rule as slicc-bios's `edge/publish.mjs`. `main`, `seven` and `www` are refused, so `seven/` can't be written this way at all.
+- **Owners:** if `branches/<label>.json` already names another branch (`feat/x` and `feat-x` share a label), every call gets 409.
+- **The API:**
+  - `GET /api/publish/manifest` reads the branch's manifest, and `PUT` with `{ files }` writes it as `{ branch, files }`;
+  - `PUT /api/publish/files/<path>` writes a file, with a `Content-Length` of at most 100 MiB;
+  - `DELETE /api/publish/files/<path>` removes one.
+
+  Paths with empty, `.` or `..` segments (decoded first) or backslashes are refused.
+
 `www.sliccy.ai` and `sliccy.ai` have more specific routes to `slicc-tray-hub` (SLICC v6), so they never reach this worker, and `*.` doesn't match the bare domain. A proxied wildcard record `AAAA *.sliccy.ai 100::` makes every other subdomain resolve.
 
 The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. The router never serves a manifest, because every key it builds has a `/` after the label.
@@ -58,6 +73,7 @@ The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`np
 - 404 for an unknown host;
 - 304/412 for conditional requests and 405 for writes;
 - that `www.sliccy.ai` and `sliccy.ai` still reach `slicc-tray-hub`;
+- that the publish route refuses no token, refuses this repository's own real OIDC token (`not from ai-ecoverse/slicc-bios`, so GitHub's keys and the signature check are exercised), and refuses a tampered one (the deploy job has `id-token: write`);
 - that a tray created through `seven.sliccy.ai` gets `www.sliccy.ai` capability URLs and its leader WebSocket connects through `seven.sliccy.ai`;
 - that Chromium boots <https://seven.sliccy.ai/> into `bash` in the terminal, cross-origin isolated. The screenshot is uploaded as a workflow artifact.
 
