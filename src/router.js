@@ -36,11 +36,28 @@ async function fonts(url, request, env) {
   });
 }
 
+const TRAY = /^\/(tray|controller\/[^/]+|api\/tray\/[^/]+\/supersede)$/;
+
+async function tray(url, request, env) {
+  const forwarded = new Request(
+    new URL(url.pathname + url.search, 'https://www.sliccy.ai'),
+    request
+  );
+  forwarded.headers.delete('cookie');
+  const upstream = await env.V6.fetch(forwarded);
+  if (upstream.webSocket) return new Response(null, { status: 101, webSocket: upstream.webSocket });
+  const response = new Response(upstream.body, upstream);
+  response.headers.delete('set-cookie');
+  response.headers.set('cache-control', 'no-store');
+  return response;
+}
+
 async function serve(request, env) {
+  const url = new URL(request.url);
+  if (TRAY.test(url.pathname)) return tray(url, request, env);
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
   }
-  const url = new URL(request.url);
   if (url.pathname.startsWith('/fonts/')) return fonts(url, request, env);
   const name = key(url);
   const object = await env.BIOS.get(name, { onlyIf: request.headers });
@@ -59,6 +76,7 @@ async function serve(request, env) {
 export default {
   async fetch(request, env) {
     const response = await serve(request, env);
+    if (response.status === 101) return response;
     response.headers.set('x-sliccy-ai-version', env.VERSION.id);
     return response;
   },
