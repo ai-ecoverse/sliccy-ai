@@ -61,11 +61,11 @@ The workflow needs the `CLOUDFLARE_API_TOKEN` secret, an account token with:
 
 That token can change every Worker on the account, SLICC v6's `slicc-tray-hub` included. So it is **not** a repository secret, which any pushed branch could read by changing the workflow. It's stored in two GitHub environments, and the deploy job runs in one of them:
 - **`production`:** used by `main`. Its deployment branch policy allows `main` only, so a branch that names `production` in its workflow is refused before the job starts.
-- **`preview`:** used by every other branch. It requires a reviewer's approval, so a branch's job, and anything its workflow does with the token, waits until a maintainer has looked at it.
+- **`preview`:** used by every other branch, with no approval step, so a branch deploys as soon as it's pushed. Anyone who can push a branch here can use the token through the workflow; forks never get it.
 
 To set them up, a repository admin:
 1. creates `production` (deployment branches: selected, `main`) and adds `CLOUDFLARE_API_TOKEN` to it;
-2. creates `preview` (required reviewers: the maintainers; deployment branches: all) and adds `CLOUDFLARE_API_TOKEN` to it;
+2. creates `preview` (deployment branches: all; no required reviewers) and adds `CLOUDFLARE_API_TOKEN` to it;
 3. deletes the repository-level `CLOUDFLARE_API_TOKEN`.
 
 ## Rules
