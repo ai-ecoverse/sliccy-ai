@@ -10,6 +10,9 @@ const config = JSON.parse(readFileSync(new URL('wrangler.json', root)));
 const hub = `export default {
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname === '/join/old') {
+      return new Response('{"result":{"action":"redirect"}}', { status: 308, headers: { location: 'https://www.sliccy.ai/join/new' } });
+    }
     if (request.headers.get('upgrade') === 'websocket') {
       const [client, server] = Object.values(new WebSocketPair());
       server.accept();
@@ -70,4 +73,15 @@ test('carries the leader WebSocket through to the hub', async () => {
   socket.send('hello');
   assert.equal(await reply, '/controller/abc null hello');
   socket.close();
+});
+
+test('a follower page gets the hub supersede redirect as an answer it can read', async () => {
+  const response = await worker.dispatchFetch('https://seven.sliccy.ai/join/old', {
+    method: 'POST',
+    body: '{}',
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-tray-status'), '308');
+  assert.equal(response.headers.get('x-tray-location'), 'https://www.sliccy.ai/join/new');
+  assert.deepEqual(await response.json(), { result: { action: 'redirect' } });
 });

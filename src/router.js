@@ -38,17 +38,27 @@ async function fonts(url, request, env) {
   });
 }
 
-const TRAY = /^\/(tray|controller\/[^/]+|api\/tray\/[^/]+\/supersede)$/;
+const TRAY = /^\/(tray|controller\/[^/]+|join\/[^/]+|api\/tray\/[^/]+\/supersede)$/;
 
 async function tray(url, request, env) {
   const forwarded = new Request(
-    new URL(url.pathname + url.search, 'https://www.sliccy.ai'),
-    request
+    new Request(new URL(url.pathname + url.search, 'https://www.sliccy.ai'), request),
+    { redirect: 'manual' }
   );
   forwarded.headers.delete('cookie');
   const upstream = await env.V6.fetch(forwarded);
   if (upstream.webSocket) return new Response(null, { status: 101, webSocket: upstream.webSocket });
-  const response = new Response(upstream.body, upstream);
+  const moved = upstream.status >= 300 && upstream.status < 400;
+  const response = new Response(
+    upstream.body,
+    moved ? { status: 200, headers: upstream.headers } : upstream
+  );
+  if (moved) {
+    response.headers.set('x-tray-status', String(upstream.status));
+    const location = upstream.headers.get('location');
+    if (location) response.headers.set('x-tray-location', location);
+    response.headers.delete('location');
+  }
   response.headers.delete('set-cookie');
   response.headers.set('cache-control', 'no-store');
   return response;
