@@ -5,7 +5,7 @@ import { chromium } from 'playwright-core';
 import { deployed, override } from './live.mjs';
 
 const artifacts = new URL('../../../artifacts/live/', import.meta.url);
-const prompt = 'slicc:~$ ';
+const prompt = /slicc:[^\s]*[$#] /;
 const browser = await chromium.launch();
 after(() => browser.close());
 
