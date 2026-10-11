@@ -36,3 +36,23 @@ test('a seven page becomes a tray leader on slicc-tray-hub through its own origi
   assert.equal(first.type, 'leader.connected');
   socket.close();
 });
+
+test('a follower page joins the tray through its own origin', async () => {
+  const created = await get(`${seven}/tray`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+  const { capabilities } = await created.json();
+  const join = new URL(capabilities.join.url);
+  const attached = await get(`${seven}${join.pathname}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ runtime: 'slicc-seven/1' }),
+  });
+  assert.equal(attached.status, 200);
+  if (version) assert.equal(attached.headers.get('x-sliccy-ai-version'), version);
+  const answer = await attached.json();
+  assert.equal(answer.role, 'follower');
+  assert.equal(answer.result.code, 'LEADER_NOT_ELECTED');
+});

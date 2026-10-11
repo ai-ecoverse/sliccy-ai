@@ -21,9 +21,16 @@ Each host is its own origin, so a branch gets its own OPFS and service worker an
 The tray hub's leader routes are passed through to `slicc-tray-hub` the same way, so a seven page can link devices as a tray leader without CORS:
 - `POST /tray`;
 - `/controller/<token>`, including the leader's WebSocket upgrade;
+- `/join/<token>`, a follower's attach and bootstrap poll, so a seven page can follow another seven's tray;
 - `POST /api/tray/<trayId>/supersede`.
 
-The request goes to `https://www.sliccy.ai/<path>`, so the join and controller URLs the hub mints stay on `www.sliccy.ai`, and followers use them there directly. `Cookie` is dropped on the way in and `Set-Cookie` on the way out, so the page's requests and its leader socket carry no ambient credentials. The page swaps the `www.sliccy.ai` host in the controller and WebSocket URLs for its own. Every other tray route, `/join/*` included, stays on `www.sliccy.ai` only.
+The proxy doesn't follow redirects. A browser can't read a redirect it doesn't follow, so a 3xx from the hub (the 308 a superseded tray answers) comes back as **200**, with:
+- the hub's body, which names the new join URL;
+- its `Link` header;
+- `x-tray-status`: the original status;
+- `x-tray-location`: the original `Location`.
+
+The request goes to `https://www.sliccy.ai/<path>`, so the join and controller URLs the hub mints stay on `www.sliccy.ai`, and followers use them there directly. `Cookie` is dropped on the way in and `Set-Cookie` on the way out, so the page's requests and its leader socket carry no ambient credentials. The page swaps the `www.sliccy.ai` host in the controller and WebSocket URLs for its own. Every other tray route stays on `www.sliccy.ai` only.
 
 **Publishing branches without a secret:** `/api/publish/*` on every host lets slicc-bios's branch builds publish with their GitHub Actions OIDC token instead of a Cloudflare token, so a branch never holds a secret that could overwrite `seven/`.
 - **The token:** an RS256 JWT, checked against GitHub's keys (`https://token.actions.githubusercontent.com/.well-known/jwks`, cached for 10 minutes). It has to have:
@@ -74,6 +81,7 @@ The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`np
 - 304/412 for conditional requests and 405 for writes;
 - that `www.sliccy.ai` and `sliccy.ai` still reach `slicc-tray-hub`;
 - that the publish route refuses no token, refuses this repository's own real OIDC token (`not from ai-ecoverse/slicc-bios`, so GitHub's keys and the signature check are exercised), and refuses a tampered one (the deploy job has `id-token: write`);
+- that a follower attaches to a tray through `seven.sliccy.ai` (`role: follower`, waiting for a leader);
 - that a tray created through `seven.sliccy.ai` gets `www.sliccy.ai` capability URLs and its leader WebSocket connects through `seven.sliccy.ai`;
 - that Chromium boots <https://seven.sliccy.ai/> into `bash` in the terminal, cross-origin isolated. The screenshot is uploaded as a workflow artifact.
 
