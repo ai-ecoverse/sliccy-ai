@@ -61,8 +61,12 @@ async function sevens(env, now) {
   return ancestors.list;
 }
 
+export async function embedders(env, root, now = Date.now()) {
+  return [...(await sevens(env, now)), ...(root === 'vault/main' ? [] : DEV)];
+}
+
 export async function vaultHeaders(env, root, now = Date.now()) {
-  const frames = [...(await sevens(env, now)), ...(root === 'vault/main' ? [] : DEV)];
+  const frames = await embedders(env, root, now);
   return {
     'content-security-policy': [
       "default-src 'none'",
@@ -83,6 +87,7 @@ export async function vaultHeaders(env, root, now = Date.now()) {
     'strict-transport-security': 'max-age=31536000',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
+    'origin-agent-cluster': '?1',
   };
 }
 
@@ -144,6 +149,12 @@ async function asset(request, env, url, root) {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
   }
   const extra = root ? await vaultHeaders(env, root) : {};
+  if (root && url.pathname === '/embedders.json') {
+    const body = JSON.stringify({ embedders: await embedders(env, root) });
+    return new Response(request.method === 'HEAD' ? null : body, {
+      headers: { ...extra, 'content-type': 'application/json', 'cache-control': 'no-cache' },
+    });
+  }
   const name = key(url, root);
   const object = await env.BIOS.get(name, { onlyIf: request.headers });
   if (!object) return new Response('not found', { status: 404, headers: extra });

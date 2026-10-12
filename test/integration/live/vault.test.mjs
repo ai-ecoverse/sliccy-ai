@@ -17,6 +17,10 @@ test('vault.sliccy.ai answers from this worker with the vault headers, and no se
   assert.equal(response.headers.get('cross-origin-embedder-policy'), 'require-corp');
   assert.equal(response.headers.get('cross-origin-resource-policy'), 'same-site');
   assert.equal(response.headers.get('set-cookie'), null);
+  assert.equal(response.headers.get('origin-agent-cluster'), '?1');
+  const { embedders } = await (await get(`${vault}/embedders.json`)).json();
+  assert.equal(embedders[0], 'https://seven.sliccy.ai');
+  assert.ok(embedders.every((origin) => csp.includes(origin)));
   assert.equal((await get(`${vault}/bios.js`)).status, 404);
   assert.equal((await get(`${vault}/tray`, { method: 'POST', body: '{}' })).status, 405);
 });

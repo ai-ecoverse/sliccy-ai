@@ -52,7 +52,8 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
   - **CSP:** `default-src 'none'`, `script-src 'self' 'wasm-unsafe-eval'`, `style-src 'self'`, and `img-src 'self' data:`; `font-src`, `worker-src` and `manifest-src` are `'self'`; `connect-src 'self' https:` plus the local proxy on `localhost`/`127.0.0.1`; `base-uri 'none'` and `form-action 'none'`.
   - **`frame-ancestors`:** `https://seven.sliccy.ai` and every published slicc-bios branch (`https://<label>.sliccy.ai`, read from the `branches/<label>.json` manifests and cached for a minute). Preview vaults also allow `http://localhost:*` and `http://127.0.0.1:*`.
   - **Isolation:** `Cross-Origin-Embedder-Policy: require-corp`, `Cross-Origin-Resource-Policy: same-site` and `Cross-Origin-Opener-Policy: same-origin`.
-  - **Transport and the rest:** `Strict-Transport-Security: max-age=31536000`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
+  - **Transport and the rest:** `Strict-Transport-Security: max-age=31536000`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `Origin-Agent-Cluster: ?1`, so seven's script can't reach the vault's realm even when Chrome runs the same-site frame in seven's process.
+- **`GET /embedders.json`** answers `{ "embedders": [...] }`. It's the same list as `frame-ancestors`, from the same code, and the vault checks `event.origin` against it.
   - **Caching:** `cache-control: no-cache` and the ETag, as for seven.
   - **Cookies:** none set.
 - **Publishing:** slicc-vault publishes through the same `/api/publish/*` route (on any host but a vault host), with an OIDC token whose `repository` is `ai-ecoverse/slicc-vault`.
