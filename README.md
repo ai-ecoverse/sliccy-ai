@@ -47,6 +47,19 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 
   Paths with empty, `.` or `..` segments (decoded first) or backslashes are refused.
 
+**The vault:** `vault.sliccy.ai` serves [slicc-vault](https://github.com/ai-ecoverse/slicc-vault)'s `main` release from `vault/main/`, and `vault-<branch>.sliccy.ai` serves its other branches from `vault/branches/<label>/`, in the same bucket. Seven embeds it as a hidden iframe and opens it as a popup (the secrets design, §3.2). It is served from the network only: no seven route works on a vault host (tray, fonts, publish), so only GET and HEAD of the vault's own files are answered.
+- **Headers on every vault response:**
+  - **CSP:** `default-src 'none'`, `script-src 'self' 'wasm-unsafe-eval'`, `style-src 'self'`, and `img-src 'self' data:`; `font-src`, `worker-src` and `manifest-src` are `'self'`; `connect-src 'self' https:` plus the local proxy on `localhost`/`127.0.0.1`; `base-uri 'none'` and `form-action 'none'`.
+  - **`frame-ancestors`:** `https://seven.sliccy.ai` and every published slicc-bios branch (`https://<label>.sliccy.ai`, read from the `branches/<label>.json` manifests and cached for a minute). Preview vaults also allow `http://localhost:*` and `http://127.0.0.1:*`.
+  - **Isolation:** `Cross-Origin-Embedder-Policy: require-corp`, `Cross-Origin-Resource-Policy: same-site` and `Cross-Origin-Opener-Policy: same-origin`.
+  - **Transport and the rest:** `Strict-Transport-Security: max-age=31536000`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
+  - **Caching:** `cache-control: no-cache` and the ETag, as for seven.
+  - **Cookies:** none set.
+- **Publishing:** slicc-vault publishes through the same `/api/publish/*` route (on any host but a vault host), with an OIDC token whose `repository` is `ai-ecoverse/slicc-vault`.
+  - `main` publishes to `vault/main/` only when the token's `environment` is `production`, i.e. from a job in slicc-vault's `production` environment.
+  - Every other branch publishes to `vault/branches/<label>/`.
+- **Reserved names:** slicc-bios branches named `vault` or `vault-*` can't publish, so they can never take a vault host.
+
 `www.sliccy.ai` and `sliccy.ai` have more specific routes to `slicc-tray-hub` (SLICC v6), so they never reach this worker, and `*.` doesn't match the bare domain. A proxied wildcard record `AAAA *.sliccy.ai 100::` makes every other subdomain resolve.
 
 The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. The router never serves a manifest, because every key it builds has a `/` after the label.

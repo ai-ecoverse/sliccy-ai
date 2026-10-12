@@ -1,10 +1,12 @@
 export const ISSUER = 'https://token.actions.githubusercontent.com';
 export const AUDIENCE = 'https://sliccy.ai';
 export const REPOSITORY = 'ai-ecoverse/slicc-bios';
+export const VAULT_REPOSITORY = 'ai-ecoverse/slicc-vault';
+const OWNER = 'ai-ecoverse';
 const JWKS_TTL_MS = 10 * 60 * 1000;
 const SKEW_S = 60;
 const MAX_BYTES = 100 * 1024 * 1024;
-const RESERVED = new Set(['seven', 'www']);
+const RESERVED = new Set(['seven', 'www', 'vault']);
 const keys = { at: 0, byKid: new Map() };
 
 export function label(branch) {
@@ -13,7 +15,9 @@ export function label(branch) {
     .replace(/[^a-z0-9]+/g, '-')
     .slice(0, 63)
     .replace(/^-+|-+$/g, '');
-  return !name || RESERVED.has(name) || branch === 'main' ? null : name;
+  return !name || RESERVED.has(name) || name.startsWith('vault-') || branch === 'main'
+    ? null
+    : name;
 }
 
 export function safePath(path) {
@@ -88,15 +92,36 @@ export async function verify(token, { fetcher = fetch, now = Date.now() } = {}) 
   if (!(claims.exp > seconds - SKEW_S)) return { error: 'expired' };
   if (claims.nbf > seconds + SKEW_S || claims.iat > seconds + SKEW_S)
     return { error: 'not valid yet' };
-  if (claims.repository !== REPOSITORY || claims.repository_owner !== REPOSITORY.split('/')[0]) {
-    return { error: `not from ${REPOSITORY}`, status: 403 };
+  const vault = claims.repository === VAULT_REPOSITORY;
+  if ((claims.repository !== REPOSITORY && !vault) || claims.repository_owner !== OWNER) {
+    return { error: `not from ${REPOSITORY} or ${VAULT_REPOSITORY}`, status: 403 };
   }
   const ref = String(claims.ref ?? '');
   if (!ref.startsWith('refs/heads/')) return { error: 'not a branch', status: 403 };
   const branch = ref.slice('refs/heads/'.length);
+  if (vault) return vaultTarget(branch, claims);
   const name = label(branch);
   if (!name) return { error: `${branch} doesn't publish through this route`, status: 403 };
-  return { branch, label: name };
+  return { branch, label: name, prefix: `branches/${name}`, host: name };
+}
+
+function vaultTarget(branch, claims) {
+  if (branch === 'main') {
+    if (claims.environment !== 'production')
+      return {
+        error: 'slicc-vault main publishes only from its production environment',
+        status: 403,
+      };
+    return { branch, label: 'vault', prefix: 'vault/main', host: 'vault' };
+  }
+  const name = label(branch);
+  if (!name) return { error: `${branch} doesn't publish through this route`, status: 403 };
+  return {
+    branch,
+    label: `vault-${name}`,
+    prefix: `vault/branches/${name}`,
+    host: `vault-${name}`,
+  };
 }
 
 const reply = (status, body) =>
@@ -105,8 +130,8 @@ const reply = (status, body) =>
     headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
   });
 
-async function owner(env, name) {
-  const manifest = await env.BIOS.get(`branches/${name}.json`);
+async function owner(env, prefix) {
+  const manifest = await env.BIOS.get(`${prefix}.json`);
   if (!manifest) return { files: [] };
   return manifest.json();
 }
@@ -121,8 +146,8 @@ export async function publish(request, env, options = {}) {
     status: 502,
   }));
   if (checked.error) return reply(checked.status ?? 401, { error: checked.error });
-  const { branch, label: name } = checked;
-  const current = await owner(env, name);
+  const { branch, label: name, prefix, host } = checked;
+  const current = await owner(env, prefix);
   if (current.branch && current.branch !== branch) {
     return reply(409, {
       error: `${name}.sliccy.ai already serves ${current.branch}, rename ${branch}`,
@@ -141,15 +166,15 @@ export async function publish(request, env, options = {}) {
     ) {
       return reply(400, { error: 'expected { files: [paths] }' });
     }
-    await env.BIOS.put(`branches/${name}.json`, JSON.stringify({ branch, files }), {
+    await env.BIOS.put(`${prefix}.json`, JSON.stringify({ branch, files }), {
       httpMetadata: { contentType: 'application/json' },
     });
-    return reply(200, { label: name, url: `https://${name}.sliccy.ai/` });
+    return reply(200, { label: name, url: `https://${host}.sliccy.ai/` });
   }
   if (!rest.startsWith('files/')) return reply(404, { error: 'no such route' });
   const path = safePath(rest.slice('files/'.length));
   if (!path) return reply(400, { error: 'a file path inside the branch' });
-  const object = `branches/${name}/${path}`;
+  const object = `${prefix}/${path}`;
   if (request.method === 'DELETE') {
     await env.BIOS.delete(object);
     return reply(200, { deleted: path });
