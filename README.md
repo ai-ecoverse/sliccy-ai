@@ -47,9 +47,24 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 
   Paths with empty, `.` or `..` segments (decoded first) or backslashes are refused.
 
+**The vault:** `vault.sliccy.ai` serves [slicc-vault](https://github.com/ai-ecoverse/slicc-vault)'s `main` release from `vault/main/`, and `vault-<branch>.sliccy.ai` serves its other branches from `vault/branches/<label>/`, in the same bucket. Seven embeds it as a hidden iframe and opens it as a popup (the secrets design, §3.2). It is served from the network only: no seven route works on a vault host (tray, fonts, publish), so only GET and HEAD of the vault's own files are answered.
+- **Headers on every vault response:**
+  - **CSP:** `default-src 'none'`, `script-src 'self' 'wasm-unsafe-eval'`, `style-src 'self'`, and `img-src 'self' data:`; `font-src`, `worker-src` and `manifest-src` are `'self'`; `connect-src 'self' https:` plus the local proxy on `localhost`/`127.0.0.1`; `base-uri 'none'` and `form-action 'none'`.
+  - **`frame-ancestors`:** `https://seven.sliccy.ai` and every published slicc-bios branch (`https://<label>.sliccy.ai`, read from the `branches/<label>.json` manifests and cached for a minute). Preview vaults also allow `http://localhost:*` and `http://127.0.0.1:*`.
+  - **Isolation:** `Cross-Origin-Embedder-Policy: require-corp`, `Cross-Origin-Resource-Policy: same-site` and `Cross-Origin-Opener-Policy: same-origin`.
+  - **Transport and the rest:** `Strict-Transport-Security: max-age=31536000`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `Origin-Agent-Cluster: ?1`, so seven's script can't reach the vault's realm even when Chrome runs the same-site frame in seven's process.
+- **`/auth/callback`** serves the build's `auth/callback.html`, the OAuth callback six's relay sends to (source `origin`). It's the only extensionless page.
+- **`GET /embedders.json`** answers `{ "embedders": [...] }`. It's the same list as `frame-ancestors`, from the same code, and the vault checks `event.origin` against it.
+  - **Caching:** `cache-control: no-cache` and the ETag, as for seven.
+  - **Cookies:** none set.
+- **Publishing:** slicc-vault publishes through the same `/api/publish/*` route (on any host but a vault host), with an OIDC token whose `repository` is `ai-ecoverse/slicc-vault`.
+  - `main` publishes to `vault/main/` only when the token's `environment` is `production`, i.e. from a job in slicc-vault's `production` environment.
+  - Every other branch publishes to `vault/branches/<label>/`. The label is the branch name lower-cased, with runs of other characters turned into `-`, cut to 57 characters so `vault-<label>` fits a DNS label. slicc-bios's reserved names don't apply here, so `vault-seven` is fine.
+- **Reserved names:** slicc-bios branches named `vault` or `vault-*` can't publish, so they can never take a vault host.
+
 `www.sliccy.ai` and `sliccy.ai` have more specific routes to `slicc-tray-hub` (SLICC v6), so they never reach this worker, and `*.` doesn't match the bare domain. A proxied wildcard record `AAAA *.sliccy.ai 100::` makes every other subdomain resolve.
 
-The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. The router never serves a manifest, because every key it builds has a `/` after the label.
+The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. Seven's HTML responses (`seven` and branch previews) send `Content-Security-Policy: frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`, so no other site can frame seven; vault hosts send their own `frame-ancestors` instead. The router never serves a manifest, because every key it builds has a `/` after the label.
 
 The bucket's lifecycle rule `branch-releases` expires everything under `branches/` 30 days after it was uploaded. Every push to a branch uploads all of its files again, so active branches stay up, and nobody has to clean up after deleted ones. `seven/` never expires.
 

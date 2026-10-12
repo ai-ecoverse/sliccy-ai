@@ -154,3 +154,18 @@ test('rejects writes', async () => {
   assert.equal(response.status, 405);
   assert.equal(response.headers.get('allow'), 'GET, HEAD');
 });
+
+test('the vault is served from R2 on vault.sliccy.ai, framed only by the published sevens', async () => {
+  await bucket.put('vault/main/index.html', '<!doctype html><title>vault</title>');
+  const response = await get('https://vault.sliccy.ai/');
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /<title>vault<\/title>/);
+  const csp = response.headers.get('content-security-policy');
+  assert.match(
+    csp,
+    /frame-ancestors https:\/\/seven\.sliccy\.ai https:\/\/feat-shell\.sliccy\.ai$/
+  );
+  assert.equal(response.headers.get('cross-origin-embedder-policy'), 'require-corp');
+  assert.equal((await get('https://vault.sliccy.ai/tray', { method: 'POST' })).status, 405);
+  assert.equal((await get('https://vault-x.sliccy.ai/')).status, 404);
+});

@@ -6,6 +6,12 @@ const types = {
   js: 'text/javascript; charset=utf-8',
   json: 'application/json',
   wasm: 'application/wasm',
+  svg: 'image/svg+xml',
+  png: 'image/png',
+  ico: 'image/x-icon',
+  woff2: 'font/woff2',
+  webmanifest: 'application/manifest+json',
+  txt: 'text/plain; charset=utf-8',
 };
 
 function failed(headers, object) {
@@ -18,10 +24,78 @@ function failed(headers, object) {
   return Math.floor(object.uploaded / 1000) * 1000 > since ? 412 : 304;
 }
 
-function key(url) {
+export function vaultOf(url) {
   const label = url.hostname.split('.')[0];
-  const path = url.pathname.endsWith('/') ? `${url.pathname}index.html` : url.pathname;
-  return `${label === 'seven' ? label : `branches/${label}`}${path}`;
+  if (label === 'vault') return 'vault/main';
+  return label.startsWith('vault-') ? `vault/branches/${label.slice('vault-'.length)}` : null;
+}
+
+const VAULT_PAGES = { '/auth/callback': '/auth/callback.html' };
+
+function key(url, root) {
+  const label = url.hostname.split('.')[0];
+  const page = root ? VAULT_PAGES[url.pathname] : undefined;
+  const path = page ?? (url.pathname.endsWith('/') ? `${url.pathname}index.html` : url.pathname);
+  return `${root ?? (label === 'seven' ? label : `branches/${label}`)}${path}`;
+}
+
+const SEVEN = 'https://seven.sliccy.ai';
+const SELF_FRAMED = {
+  'content-security-policy': "frame-ancestors 'self'",
+  'x-frame-options': 'SAMEORIGIN',
+};
+const DEV = ['http://localhost:*', 'http://127.0.0.1:*'];
+const ANCESTORS_MS = 60_000;
+const ancestors = { at: 0, list: null };
+
+export function forgetAncestors() {
+  ancestors.at = 0;
+  ancestors.list = null;
+}
+
+async function sevens(env, now) {
+  if (ancestors.list && now - ancestors.at < ANCESTORS_MS) return ancestors.list;
+  const labels = [];
+  let cursor;
+  do {
+    const page = await env.BIOS.list({ prefix: 'branches/', delimiter: '/', cursor });
+    for (const object of page.objects)
+      if (object.key.endsWith('.json')) labels.push(object.key.slice(9, -5));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  ancestors.list = [SEVEN, ...labels.map((label) => `https://${label}.sliccy.ai`)];
+  ancestors.at = now;
+  return ancestors.list;
+}
+
+export async function embedders(env, root, now = Date.now()) {
+  return [...(await sevens(env, now)), ...(root === 'vault/main' ? [] : DEV)];
+}
+
+export async function vaultHeaders(env, root, now = Date.now()) {
+  const frames = await embedders(env, root, now);
+  return {
+    'content-security-policy': [
+      "default-src 'none'",
+      "script-src 'self' 'wasm-unsafe-eval'",
+      "style-src 'self'",
+      "img-src 'self' data:",
+      "font-src 'self'",
+      "connect-src 'self' https: http://localhost:* http://127.0.0.1:*",
+      "worker-src 'self'",
+      "manifest-src 'self'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      `frame-ancestors ${frames.join(' ')}`,
+    ].join('; '),
+    'cross-origin-embedder-policy': 'require-corp',
+    'cross-origin-resource-policy': 'same-site',
+    'cross-origin-opener-policy': 'same-origin',
+    'strict-transport-security': 'max-age=31536000',
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+    'origin-agent-cluster': '?1',
+  };
 }
 
 async function fonts(url, request, env) {
@@ -66,17 +140,36 @@ async function tray(url, request, env) {
 
 async function serve(request, env) {
   const url = new URL(request.url);
+  const vault = vaultOf(url);
+  if (vault) return asset(request, env, url, vault);
   if (TRAY.test(url.pathname)) return tray(url, request, env);
   if (url.pathname.startsWith('/api/publish/')) return publish(request, env);
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
   }
   if (url.pathname.startsWith('/fonts/')) return fonts(url, request, env);
-  const name = key(url);
+  return asset(request, env, url, null);
+}
+
+async function asset(request, env, url, root) {
+  const extra = root ? await vaultHeaders(env, root) : {};
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response(null, { status: 405, headers: { ...extra, allow: 'GET, HEAD' } });
+  }
+  if (root && url.pathname === '/embedders.json') {
+    const body = JSON.stringify({ embedders: await embedders(env, root) });
+    return new Response(request.method === 'HEAD' ? null : body, {
+      headers: { ...extra, 'content-type': 'application/json', 'cache-control': 'no-cache' },
+    });
+  }
+  const name = key(url, root);
   const object = await env.BIOS.get(name, { onlyIf: request.headers });
-  if (!object) return new Response('not found', { status: 404 });
+  if (!object) return new Response('not found', { status: 404, headers: extra });
+  const type = types[name.split('.').pop()] ?? 'application/octet-stream';
   const headers = {
-    'content-type': types[name.split('.').pop()] ?? 'application/octet-stream',
+    ...(!root && type.startsWith('text/html') ? SELF_FRAMED : {}),
+    ...extra,
+    'content-type': type,
     'cache-control': 'no-cache',
     etag: object.httpEtag,
   };

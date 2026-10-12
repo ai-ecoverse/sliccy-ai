@@ -24,7 +24,7 @@ test("the publish route checks a real GitHub Actions token, and refuses this rep
   const response = await get(route, { headers: { authorization: `Bearer ${value}` } });
   assert.deepEqual(
     [response.status, (await response.json()).error],
-    [403, 'not from ai-ecoverse/slicc-bios']
+    [403, 'not from ai-ecoverse/slicc-bios or ai-ecoverse/slicc-vault']
   );
   const tampered = `${value.slice(0, -4)}AAAA`;
   const forged = await get(route, { headers: { authorization: `Bearer ${tampered}` } });
