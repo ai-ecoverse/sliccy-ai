@@ -59,7 +59,7 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
   - **Cookies:** none set.
 - **Publishing:** slicc-vault publishes through the same `/api/publish/*` route (on any host but a vault host), with an OIDC token whose `repository` is `ai-ecoverse/slicc-vault`.
   - `main` publishes to `vault/main/` only when the token's `environment` is `production`, i.e. from a job in slicc-vault's `production` environment.
-  - Every other branch publishes to `vault/branches/<label>/`.
+  - Every other branch publishes to `vault/branches/<label>/`. The label is the branch name lower-cased, with runs of other characters turned into `-`, cut to 57 characters so `vault-<label>` fits a DNS label. slicc-bios's reserved names don't apply here, so `vault-seven` is fine.
 - **Reserved names:** slicc-bios branches named `vault` or `vault-*` can't publish, so they can never take a vault host.
 
 `www.sliccy.ai` and `sliccy.ai` have more specific routes to `slicc-tray-hub` (SLICC v6), so they never reach this worker, and `*.` doesn't match the bare domain. A proxied wildcard record `AAAA *.sliccy.ai 100::` makes every other subdomain resolve.

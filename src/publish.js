@@ -9,12 +9,20 @@ const MAX_BYTES = 100 * 1024 * 1024;
 const RESERVED = new Set(['seven', 'www', 'vault']);
 const keys = { at: 0, byKid: new Map() };
 
-export function label(branch) {
-  const name = branch
+const normal = (branch, max) =>
+  branch
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .slice(0, 63)
+    .slice(0, max)
     .replace(/^-+|-+$/g, '');
+
+export function vaultLabel(branch) {
+  const name = normal(branch, 63 - 'vault-'.length);
+  return name && branch !== 'main' ? name : null;
+}
+
+export function label(branch) {
+  const name = normal(branch, 63);
   return !name || RESERVED.has(name) || name.startsWith('vault-') || branch === 'main'
     ? null
     : name;
@@ -114,7 +122,7 @@ function vaultTarget(branch, claims) {
       };
     return { branch, label: 'vault', prefix: 'vault/main', host: 'vault' };
   }
-  const name = label(branch);
+  const name = vaultLabel(branch);
   if (!name) return { error: `${branch} doesn't publish through this route`, status: 403 };
   return {
     branch,

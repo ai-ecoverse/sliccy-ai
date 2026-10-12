@@ -152,10 +152,10 @@ async function serve(request, env) {
 }
 
 async function asset(request, env, url, root) {
-  if (request.method !== 'GET' && request.method !== 'HEAD') {
-    return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
-  }
   const extra = root ? await vaultHeaders(env, root) : {};
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response(null, { status: 405, headers: { ...extra, allow: 'GET, HEAD' } });
+  }
   if (root && url.pathname === '/embedders.json') {
     const body = JSON.stringify({ embedders: await embedders(env, root) });
     return new Response(request.method === 'HEAD' ? null : body, {
