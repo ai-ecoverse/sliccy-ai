@@ -30,13 +30,20 @@ export function vaultOf(url) {
   return label.startsWith('vault-') ? `vault/branches/${label.slice('vault-'.length)}` : null;
 }
 
+const VAULT_PAGES = { '/auth/callback': '/auth/callback.html' };
+
 function key(url, root) {
   const label = url.hostname.split('.')[0];
-  const path = url.pathname.endsWith('/') ? `${url.pathname}index.html` : url.pathname;
+  const page = root ? VAULT_PAGES[url.pathname] : undefined;
+  const path = page ?? (url.pathname.endsWith('/') ? `${url.pathname}index.html` : url.pathname);
   return `${root ?? (label === 'seven' ? label : `branches/${label}`)}${path}`;
 }
 
 const SEVEN = 'https://seven.sliccy.ai';
+const SELF_FRAMED = {
+  'content-security-policy': "frame-ancestors 'self'",
+  'x-frame-options': 'SAMEORIGIN',
+};
 const DEV = ['http://localhost:*', 'http://127.0.0.1:*'];
 const ANCESTORS_MS = 60_000;
 const ancestors = { at: 0, list: null };
@@ -158,9 +165,11 @@ async function asset(request, env, url, root) {
   const name = key(url, root);
   const object = await env.BIOS.get(name, { onlyIf: request.headers });
   if (!object) return new Response('not found', { status: 404, headers: extra });
+  const type = types[name.split('.').pop()] ?? 'application/octet-stream';
   const headers = {
+    ...(!root && type.startsWith('text/html') ? SELF_FRAMED : {}),
     ...extra,
-    'content-type': types[name.split('.').pop()] ?? 'application/octet-stream',
+    'content-type': type,
     'cache-control': 'no-cache',
     etag: object.httpEtag,
   };

@@ -53,6 +53,7 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
   - **`frame-ancestors`:** `https://seven.sliccy.ai` and every published slicc-bios branch (`https://<label>.sliccy.ai`, read from the `branches/<label>.json` manifests and cached for a minute). Preview vaults also allow `http://localhost:*` and `http://127.0.0.1:*`.
   - **Isolation:** `Cross-Origin-Embedder-Policy: require-corp`, `Cross-Origin-Resource-Policy: same-site` and `Cross-Origin-Opener-Policy: same-origin`.
   - **Transport and the rest:** `Strict-Transport-Security: max-age=31536000`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `Origin-Agent-Cluster: ?1`, so seven's script can't reach the vault's realm even when Chrome runs the same-site frame in seven's process.
+- **`/auth/callback`** serves the build's `auth/callback.html`, the OAuth callback six's relay sends to (source `origin`). It's the only extensionless page.
 - **`GET /embedders.json`** answers `{ "embedders": [...] }`. It's the same list as `frame-ancestors`, from the same code, and the vault checks `event.origin` against it.
   - **Caching:** `cache-control: no-cache` and the ETag, as for seven.
   - **Cookies:** none set.
@@ -63,7 +64,7 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 
 `www.sliccy.ai` and `sliccy.ai` have more specific routes to `slicc-tray-hub` (SLICC v6), so they never reach this worker, and `*.` doesn't match the bare domain. A proxied wildcard record `AAAA *.sliccy.ai 100::` makes every other subdomain resolve.
 
-The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. The router never serves a manifest, because every key it builds has a `/` after the label.
+The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. Seven's HTML responses (`seven` and branch previews) send `Content-Security-Policy: frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`, so no other site can frame seven; vault hosts send their own `frame-ancestors` instead. The router never serves a manifest, because every key it builds has a `/` after the label.
 
 The bucket's lifecycle rule `branch-releases` expires everything under `branches/` 30 days after it was uploaded. Every push to a branch uploads all of its files again, so active branches stay up, and nobody has to clean up after deleted ones. `seven/` never expires.
 

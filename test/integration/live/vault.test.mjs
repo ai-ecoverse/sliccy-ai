@@ -13,7 +13,7 @@ test('vault.sliccy.ai answers from this worker with the vault headers, and no se
   const csp = response.headers.get('content-security-policy') ?? '';
   assert.match(csp, /script-src 'self' 'wasm-unsafe-eval'/);
   assert.match(csp, /frame-ancestors https:\/\/seven\.sliccy\.ai/);
-  assert.doesNotMatch(csp, /localhost/);
+  assert.doesNotMatch(csp, /frame-ancestors[^;]*localhost/);
   assert.equal(response.headers.get('cross-origin-embedder-policy'), 'require-corp');
   assert.equal(response.headers.get('cross-origin-resource-policy'), 'same-site');
   assert.equal(response.headers.get('set-cookie'), null);

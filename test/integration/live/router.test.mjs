@@ -10,6 +10,8 @@ test('serves seven from the version under test', async () => {
   const response = await deployed(seven);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
+  assert.equal(response.headers.get('x-frame-options'), 'SAMEORIGIN');
+  assert.equal(response.headers.get('content-security-policy'), "frame-ancestors 'self'");
   assert.match(await response.text(), /<title>SLICC BIOS<\/title>/);
   if (version) assert.equal(response.headers.get('x-sliccy-ai-version'), version);
 });
