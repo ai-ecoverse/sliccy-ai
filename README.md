@@ -64,6 +64,20 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
   - Every other branch publishes to `vault/branches/<label>/`. The label is the branch name lower-cased, with runs of other characters turned into `-`, cut to 57 characters so `vault-<label>` fits a DNS label. slicc-bios's reserved names don't apply here, so `vault-seven` is fine. A vault branch named `preview` can't publish, since `vault-preview` is the shared preview vault.
 - **Reserved names:** slicc-bios branches named `vault` or `vault-*` can't publish, so they can never take a vault host.
 
+**Installers:** `https://get.sliccy.ai/<tool>` is a short installer URL, so a tool installs with `curl -fsSL https://get.sliccy.ai/<tool> | sh`. The table is in [`src/get.js`](src/get.js).
+
+| `<tool>` | Answer |
+|---|---|
+| `slicc` | `302` to slicc-cli's latest `install.sh` |
+| `jerk` | `302` to slicc-jerk's latest `install.sh` |
+| `mcpcat` | `302` to mcpcat's latest `install.sh` |
+| `playwright-cli`, `curlwright` | a three-line `sh` script, fixed here, that pipes slicc-cdp's latest `install.sh` to `sh -s -- --only <tool>` and passes on the caller's arguments (a release URL can't carry them) |
+
+- `/` lists the one-liners, and everything else is a 404.
+- Every answer is `text/plain`, with `cache-control: max-age=300`, no cookies and no CORS headers.
+- Only GET and HEAD are answered.
+- A slicc-bios branch named `get` can't publish.
+
 **mcpcat's client document:** `https://mcpcat.sliccy.ai/oauth/client.json` is [mcpcat](https://github.com/ai-ecoverse/mcpcat)'s OAuth Client ID Metadata Document (mcpcat's spec §11.2). An authorization server fetches it to learn the client, so mcpcat needs no dynamic registration. The document is in [`src/mcpcat.js`](src/mcpcat.js), so it changes only through a reviewed PR here.
 - **What it says:** a public native client (`token_endpoint_auth_method: none`), signing in with the code flow and refresh tokens, with the loopback redirects `http://127.0.0.1/callback` and `http://localhost/callback`. The authorization server lets the port vary (RFC 8252 §7.3).
 - **How it's served:** `application/json`, `cache-control: public, max-age=3600`, `access-control-allow-origin: *`, and no cookies. Every other path on `mcpcat.sliccy.ai` is a 404, and a slicc-bios branch named `mcpcat` can't publish.
