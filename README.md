@@ -88,6 +88,26 @@ The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/`
 
 The bucket's lifecycle rule `branch-releases` expires everything under `branches/` 30 days after it was uploaded. Every push to a branch uploads all of its files again, so active branches stay up, and nobody has to clean up after deleted ones. `seven/` never expires.
 
+## Service hosts
+
+Every `*.sliccy.ai` label is a seven deployment (`seven`, or a slicc-bios branch preview) **except** these service hosts:
+
+| Label | What it is |
+|---|---|
+| `www`, and the bare `sliccy.ai` | SLICC v6 and the tray hub (`slicc-tray-hub`); they don't reach this worker |
+| `vault` | slicc-vault's production release |
+| `vault-preview` | slicc-vault's `main` release, as the preview vault for seven's previews |
+| `vault-<label>` | slicc-vault's branch previews (the prefix `vault-`) |
+| `get` | the installer URLs |
+| `mcpcat` | mcpcat's OAuth client document |
+
+A label nobody published answers 404 through the wildcard record; there's no page there, seven or otherwise.
+
+**Adding a service host** takes three steps:
+1. route it in `src/router.js`, before the seven routes;
+2. reserve its label (or prefix) in `src/publish.js`, so no slicc-bios branch can publish to it;
+3. add it to [slicc-browsers](https://github.com/ai-ecoverse/slicc-browsers)' catalog (`seven.excludedLabels`, or the prefix list), so slicc-cli doesn't take it for seven when it sets up CDP or pairs over loopback.
+
 ## Develop
 
 ```sh
