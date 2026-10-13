@@ -25,10 +25,16 @@ function failed(headers, object) {
   return Math.floor(object.uploaded / 1000) * 1000 > since ? 412 : 304;
 }
 
+const STAGING = [];
+const PREVIEW_VAULT = 'vault-preview';
+
 export function vaultOf(url) {
   const label = url.hostname.split('.')[0];
-  if (label === 'vault') return 'vault/main';
-  return label.startsWith('vault-') ? `vault/branches/${label.slice('vault-'.length)}` : null;
+  if (label === 'vault') return { root: 'vault/main', production: true };
+  if (label === PREVIEW_VAULT) return { root: 'vault/main', production: false };
+  return label.startsWith('vault-')
+    ? { root: `vault/branches/${label.slice('vault-'.length)}`, production: false }
+    : null;
 }
 
 const VAULT_PAGES = { '/auth/callback': '/auth/callback.html' };
@@ -54,7 +60,7 @@ export function forgetAncestors() {
   ancestors.list = null;
 }
 
-async function sevens(env, now) {
+async function previews(env, now) {
   if (ancestors.list && now - ancestors.at < ANCESTORS_MS) return ancestors.list;
   const labels = [];
   let cursor;
@@ -64,17 +70,20 @@ async function sevens(env, now) {
       if (object.key.endsWith('.json')) labels.push(object.key.slice(9, -5));
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
-  ancestors.list = [SEVEN, ...labels.map((label) => `https://${label}.sliccy.ai`)];
+  ancestors.list = labels
+    .filter((label) => !label.startsWith('renovate-'))
+    .map((label) => `https://${label}.sliccy.ai`);
   ancestors.at = now;
   return ancestors.list;
 }
 
-export async function embedders(env, root, now = Date.now()) {
-  return [...(await sevens(env, now)), ...(root === 'vault/main' ? [] : DEV)];
+export async function embedders(env, vault, now = Date.now()) {
+  if (vault.production) return [SEVEN, ...STAGING];
+  return [...(await previews(env, now)), ...DEV];
 }
 
-export async function vaultHeaders(env, root, now = Date.now()) {
-  const frames = await embedders(env, root, now);
+export async function vaultHeaders(env, vault, now = Date.now()) {
+  const frames = await embedders(env, vault, now);
   return {
     'content-security-policy': [
       "default-src 'none'",
@@ -153,13 +162,14 @@ async function serve(request, env) {
   return asset(request, env, url, null);
 }
 
-async function asset(request, env, url, root) {
-  const extra = root ? await vaultHeaders(env, root) : {};
+async function asset(request, env, url, vault) {
+  const root = vault?.root ?? null;
+  const extra = vault ? await vaultHeaders(env, vault) : {};
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response(null, { status: 405, headers: { ...extra, allow: 'GET, HEAD' } });
   }
   if (root && url.pathname === '/embedders.json') {
-    const body = JSON.stringify({ embedders: await embedders(env, root) });
+    const body = JSON.stringify({ embedders: await embedders(env, vault) });
     return new Response(request.method === 'HEAD' ? null : body, {
       headers: { ...extra, 'content-type': 'application/json', 'cache-control': 'no-cache' },
     });

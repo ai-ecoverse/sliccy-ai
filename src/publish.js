@@ -18,7 +18,7 @@ const normal = (branch, max) =>
 
 export function vaultLabel(branch) {
   const name = normal(branch, 63 - 'vault-'.length);
-  return name && branch !== 'main' ? name : null;
+  return name && name !== 'preview' && branch !== 'main' ? name : null;
 }
 
 export function label(branch) {
