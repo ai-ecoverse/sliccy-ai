@@ -90,7 +90,7 @@ The bucket's lifecycle rule `branch-releases` expires everything under `branches
 
 ## Service hosts
 
-Every `*.sliccy.ai` label is a seven deployment (`seven`, or a slicc-bios branch preview) **except** these service hosts:
+A `*.sliccy.ai` label is either a seven deployment (`seven`, or a published slicc-bios branch preview), one of these service hosts, or unpublished:
 
 | Label | What it is |
 |---|---|
