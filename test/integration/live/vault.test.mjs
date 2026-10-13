@@ -19,7 +19,11 @@ test('vault.sliccy.ai answers from this worker with the vault headers, and no se
   assert.equal(response.headers.get('set-cookie'), null);
   assert.equal(response.headers.get('origin-agent-cluster'), '?1');
   const { embedders } = await (await get(`${vault}/embedders.json`)).json();
-  assert.equal(embedders[0], 'https://seven.sliccy.ai');
+  assert.deepEqual(embedders, ['https://seven.sliccy.ai']);
+  const previews = (await (await get('https://vault-preview.sliccy.ai/embedders.json')).json())
+    .embedders;
+  assert.ok(!previews.includes('https://seven.sliccy.ai'));
+  assert.ok(previews.every((origin) => !origin.startsWith('https://renovate-')));
   assert.ok(embedders.every((origin) => csp.includes(origin)));
   assert.equal((await get(`${vault}/bios.js`)).status, 404);
   assert.equal((await get(`${vault}/tray`, { method: 'POST', body: '{}' })).status, 405);
