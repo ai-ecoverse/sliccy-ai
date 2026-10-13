@@ -1,3 +1,4 @@
+import { get } from './get.js';
 import { mcpcat } from './mcpcat.js';
 import { publish } from './publish.js';
 
@@ -151,6 +152,7 @@ async function tray(url, request, env) {
 async function serve(request, env) {
   const url = new URL(request.url);
   if (url.hostname.split('.')[0] === 'mcpcat') return mcpcat(request, url);
+  if (url.hostname.split('.')[0] === 'get') return get(request, url);
   const vault = vaultOf(url);
   if (vault) return asset(request, env, url, vault);
   if (TRAY.test(url.pathname)) return tray(url, request, env);
