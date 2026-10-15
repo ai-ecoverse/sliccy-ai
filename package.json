@@ -22,7 +22,7 @@
     "test:live": "node --test 'test/integration/live/*.test.mjs'"
   },
   "devDependencies": {
-    "@ai-ecoverse/slicc-shared-web": "1.13.1",
+    "@ai-ecoverse/slicc-shared-web": "1.14.0",
     "@biomejs/biome": "2.5.15",
     "lefthook": "2.1.17",
     "miniflare": "4.20260730.0",
