@@ -28,7 +28,7 @@
     "miniflare": "4.20260730.0",
     "monocart-coverage-reports": "2.13.2",
     "playwright-core": "1.64.0",
-    "wrangler": "4.148.0",
+    "wrangler": "4.149.0",
     "ws": "8.22.0"
   }
 }
