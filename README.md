@@ -78,6 +78,14 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 - Only GET and HEAD are answered.
 - A slicc-bios branch named `get` can't publish.
 
+**A WebSocket echo for tests:** `wss://echo.sliccy.ai/` sends every message back, text and binary. Seven's integration tests use it as a public `wss://` target that SLICC controls, with Cloudflare's real certificate, so a client's certificate-chain check is tested without depending on a third party. The code is in [`src/echo.js`](src/echo.js).
+- **Subprotocols:** the first one offered is accepted.
+- **Limits:**
+  - at most 64 KiB per message, otherwise close 1009;
+  - 256 messages per connection, otherwise close 1008;
+  - 60 s per connection, then close 1000.
+- **Other requests:** a plain request answers 426 with a short note, and every other path is a 404.
+
 **mcpcat's client document:** `https://mcpcat.sliccy.ai/oauth/client.json` is [mcpcat](https://github.com/ai-ecoverse/mcpcat)'s OAuth Client ID Metadata Document (mcpcat's spec §11.2). An authorization server fetches it to learn the client, so mcpcat needs no dynamic registration. The document is in [`src/mcpcat.js`](src/mcpcat.js), so it changes only through a reviewed PR here.
 - **What it says:** a public native client (`token_endpoint_auth_method: none`), signing in with the code flow and refresh tokens, with the loopback redirects `http://127.0.0.1/callback` and `http://localhost/callback`. The authorization server lets the port vary (RFC 8252 §7.3).
 - **How it's served:** `application/json`, `cache-control: public, max-age=3600`, `access-control-allow-origin: *`, and no cookies. Every other path on `mcpcat.sliccy.ai` is a 404, and a slicc-bios branch named `mcpcat` can't publish.
@@ -100,6 +108,7 @@ A `*.sliccy.ai` label is either a seven deployment (`seven`, or a published slic
 | `vault-<label>` | slicc-vault's branch previews (the prefix `vault-`) |
 | `get` | the installer URLs |
 | `mcpcat` | mcpcat's OAuth client document |
+| `echo` | a WebSocket echo for tests |
 
 A label nobody published answers 404 through the wildcard record; there's no page there, seven or otherwise.
 
