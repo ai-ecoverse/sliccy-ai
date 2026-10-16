@@ -34,6 +34,7 @@ export function echo(
       { status: 426, headers: { ...HEADERS, upgrade: 'websocket' } }
     );
   const { 0: client, 1: server } = new Pair();
+  server.binaryType = 'arraybuffer';
   server.accept();
   echoSocket(server, { setTimeout: later });
   const protocol = request.headers.get('sec-websocket-protocol')?.split(',')[0]?.trim();

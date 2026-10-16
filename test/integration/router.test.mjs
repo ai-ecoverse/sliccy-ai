@@ -186,6 +186,11 @@ test('echo.sliccy.ai echoes a real WebSocket in workerd', async () => {
   );
   socket.send('hello');
   assert.equal(await got, 'hello');
+  const bin = new Promise((resolve) =>
+    socket.addEventListener('message', ({ data }) => resolve(data), { once: true })
+  );
+  socket.send(new Uint8Array([1, 2, 3]));
+  assert.deepEqual([...new Uint8Array(await bin)], [1, 2, 3]);
   socket.close(1000, 'done');
   assert.equal((await get('https://echo.sliccy.ai/')).status, 426);
 });
