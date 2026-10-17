@@ -33,6 +33,7 @@ for (let i = 0; i < 400; i++) {
 await sleep(20);
 await bucket.put(`branches/${longest('fresh')}.json`, '{"branch":"fresh","files":[]}');
 await bucket.put(`branches/${longest('renovate-x')}.json`, '{"files":[]}');
+await bucket.put(`branches/${longest('gh-readonly-queue-main-pr-1-')}.json`, '{"files":[]}');
 
 const headerBytes = (response) =>
   [...response.headers].reduce((sum, [name, value]) => sum + name.length + value.length + 4, 0);
@@ -49,6 +50,7 @@ test('the preview vault lists a bounded set of the most recently published previ
     assert.equal(embedders[0], `https://${longest('fresh')}.sliccy.ai`);
     assert.ok(!embedders.includes(`https://${longest('stale')}.sliccy.ai`));
     assert.ok(embedders.every((origin) => !origin.includes('renovate-')));
+    assert.ok(embedders.every((origin) => !origin.includes('gh-readonly-queue-')));
     assert.ok(!embedders.includes('https://seven.sliccy.ai'));
     assert.deepEqual(embedders.slice(-2), ['http://localhost:*', 'http://127.0.0.1:*']);
     assert.ok(

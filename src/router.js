@@ -56,6 +56,7 @@ const SELF_FRAMED = {
 const DEV = ['http://localhost:*', 'http://127.0.0.1:*'];
 const ANCESTORS_MS = 60_000;
 const PREVIEW_ANCESTORS = 48;
+const TRANSIENT = ['renovate-', 'gh-readonly-queue-'];
 const ancestors = { at: 0, list: null };
 
 export function forgetAncestors() {
@@ -75,7 +76,7 @@ async function previews(env, now) {
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
   ancestors.list = published
-    .filter(({ label }) => !label.startsWith('renovate-'))
+    .filter(({ label }) => !TRANSIENT.some((prefix) => label.startsWith(prefix)))
     .sort((a, b) => b.at - a.at || (a.label < b.label ? -1 : 1))
     .slice(0, PREVIEW_ANCESTORS)
     .map(({ label }) => `https://${label}.sliccy.ai`);
