@@ -55,6 +55,7 @@ const SELF_FRAMED = {
 };
 const DEV = ['http://localhost:*', 'http://127.0.0.1:*'];
 const ANCESTORS_MS = 60_000;
+const PREVIEW_ANCESTORS = 48;
 const ancestors = { at: 0, list: null };
 
 export function forgetAncestors() {
@@ -64,17 +65,20 @@ export function forgetAncestors() {
 
 async function previews(env, now) {
   if (ancestors.list && now - ancestors.at < ANCESTORS_MS) return ancestors.list;
-  const labels = [];
+  const published = [];
   let cursor;
   do {
     const page = await env.BIOS.list({ prefix: 'branches/', delimiter: '/', cursor });
     for (const object of page.objects)
-      if (object.key.endsWith('.json')) labels.push(object.key.slice(9, -5));
+      if (object.key.endsWith('.json'))
+        published.push({ label: object.key.slice(9, -5), at: object.uploaded.getTime() });
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
-  ancestors.list = labels
-    .filter((label) => !label.startsWith('renovate-'))
-    .map((label) => `https://${label}.sliccy.ai`);
+  ancestors.list = published
+    .filter(({ label }) => !label.startsWith('renovate-'))
+    .sort((a, b) => b.at - a.at || a.label.localeCompare(b.label))
+    .slice(0, PREVIEW_ANCESTORS)
+    .map(({ label }) => `https://${label}.sliccy.ai`);
   ancestors.at = now;
   return ancestors.list;
 }
