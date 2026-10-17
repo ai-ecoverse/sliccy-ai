@@ -76,7 +76,7 @@ async function previews(env, now) {
   } while (cursor);
   ancestors.list = published
     .filter(({ label }) => !label.startsWith('renovate-'))
-    .sort((a, b) => b.at - a.at || a.label.localeCompare(b.label))
+    .sort((a, b) => b.at - a.at || (a.label < b.label ? -1 : 1))
     .slice(0, PREVIEW_ANCESTORS)
     .map(({ label }) => `https://${label}.sliccy.ai`);
   ancestors.at = now;

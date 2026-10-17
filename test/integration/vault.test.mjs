@@ -20,7 +20,7 @@ const worker = new Miniflare({
 });
 after(() => worker.dispose());
 
-const HEADER_BUDGET = 8192;
+const HEADER_BUDGET = 6144;
 const longest = (prefix) => prefix.padEnd(63, 'x');
 
 const bucket = await worker.getR2Bucket(binding);
