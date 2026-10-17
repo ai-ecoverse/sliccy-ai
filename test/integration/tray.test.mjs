@@ -128,11 +128,17 @@ for (const path of [
 }
 
 test('the guest-seat routes take POST only', async () => {
-  for (const method of ['PUT', 'DELETE', 'PATCH']) {
+  for (const method of ['PUT', 'DELETE', 'PATCH', 'OPTIONS']) {
     const response = await worker.dispatchFetch('https://seven.sliccy.ai/api/tray/t1/biscotto', {
       method,
       body: '{}',
     });
     assert.equal(response.status, 405);
   }
+});
+
+test('a GET of a guest-seat route never reaches the hub', async () => {
+  const response = await worker.dispatchFetch('https://seven.sliccy.ai/api/tray/t1/biscotto');
+  assert.equal(response.status, 404);
+  await response.body?.cancel();
 });
