@@ -125,6 +125,7 @@ async function fonts(url, request, env) {
 }
 
 const TRAY = /^\/(tray|controller\/[^/]+|join\/[^/]+|api\/tray\/[^/]+\/supersede)$/;
+const SEAT = /^\/api\/tray\/[^/]+\/biscotto(\/stop)?$/;
 
 async function tray(url, request, env) {
   const forwarded = new Request(
@@ -158,6 +159,7 @@ async function serve(request, env) {
   const vault = vaultOf(url);
   if (vault) return asset(request, env, url, vault);
   if (TRAY.test(url.pathname)) return tray(url, request, env);
+  if (request.method === 'POST' && SEAT.test(url.pathname)) return tray(url, request, env);
   if (url.pathname.startsWith('/api/publish/')) return publish(request, env);
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
