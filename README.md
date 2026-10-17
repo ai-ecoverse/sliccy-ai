@@ -22,7 +22,8 @@ The tray hub's leader routes are passed through to `slicc-tray-hub` the same way
 - `POST /tray`;
 - `/controller/<token>`, including the leader's WebSocket upgrade;
 - `/join/<token>`, a follower's attach and bootstrap poll, so a seven page can follow another seven's tray;
-- `POST /api/tray/<trayId>/supersede`.
+- `POST /api/tray/<trayId>/supersede`;
+- `POST /api/tray/<trayId>/biscotto` and `POST /api/tray/<trayId>/biscotto/stop`, which mint and stop a guest seat (POST only).
 
 The proxy doesn't follow redirects. A browser can't read a redirect it doesn't follow, so a 3xx from the hub (the 308 a superseded tray answers) comes back as **200**, with:
 - the hub's body, which names the new join URL;
