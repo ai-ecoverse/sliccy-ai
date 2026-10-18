@@ -10,6 +10,19 @@
   "r2_buckets": [{ "binding": "BIOS", "bucket_name": "slicc-bios" }],
   "version_metadata": { "binding": "VERSION" },
   "services": [{ "binding": "V6", "service": "slicc-tray-hub" }],
-  "durable_objects": { "bindings": [{ "name": "HOMES", "class_name": "NtfyHome" }] },
+  "durable_objects": {
+    "bindings": [
+      { "name": "HOMES", "class_name": "NtfyHome" },
+      {
+        "name": "TRAY_HUB",
+        "class_name": "SessionTrayDurableObject",
+        "script_name": "slicc-tray-hub"
+      }
+    ]
+  },
+  "ratelimits": [
+    { "name": "CLAIMS", "namespace_id": "4201", "simple": { "limit": 10, "period": 60 } },
+    { "name": "DELIVERIES", "namespace_id": "4202", "simple": { "limit": 300, "period": 60 } }
+  ],
   "migrations": [{ "tag": "v1-ntfy-homes", "new_sqlite_classes": ["NtfyHome"] }]
 }
