@@ -489,6 +489,7 @@ export class NtfyHome {
       type: request.headers.get('content-type'),
       extra: { headers: kept(request.headers), verified: Boolean(hook.secret), hook: hook.name },
     });
+    this.touch();
     return answer({ id: message.id, topic: message.topic });
   }
 
@@ -739,10 +740,12 @@ export class NtfyHome {
     );
     this.close((stream) => !valid.has(stream.token));
     for (const stream of this.streams) stream.write(this.marker('keepalive', stream.names));
-    if (!this.streams.size) {
-      clearInterval(this.timer);
-      this.timer = null;
+    if (this.streams.size) {
+      this.touch();
+      return;
     }
+    clearInterval(this.timer);
+    this.timer = null;
   }
 
   close(test) {
