@@ -9,7 +9,7 @@ import {
   slackChallenge,
   verification,
 } from './hook.js';
-import { answer, capped, fail, HOME, MIXED, random, sha256, TOKEN } from './ntfy.js';
+import { answer, capped, fail, HOME, limited, MIXED, random, sha256, TOKEN } from './ntfy.js';
 
 export const RETENTION_S = 7 * 24 * 60 * 60;
 export const IDLE_S = 90 * 24 * 60 * 60;
@@ -24,7 +24,8 @@ export const MAX_HOOKS = 64;
 export const MAX_STREAMS = 64;
 export const MAX_TOKEN_STREAMS = 8;
 export const MAX_JSON = 1024 * 1024;
-export const MAX_QUEUE = 4 * 1024 * 1024;
+export const MAX_QUEUE = 1024 * 1024;
+export const MAX_QUEUED = 16 * 1024 * 1024;
 
 const CHUNK = 512 * 1024;
 const PAGE = 64;
@@ -135,6 +136,7 @@ export class NtfyHome {
     this.env = env;
     this.sql = ctx.storage.sql;
     this.streams = new Set();
+    this.queued = 0;
     this.timer = null;
     this.ready = false;
   }
@@ -371,10 +373,19 @@ export class NtfyHome {
   revoke(ids) {
     const gone = ids.filter((id) => this.one('DELETE FROM tokens WHERE id = ? RETURNING id', id));
     this.close((stream) => gone.includes(stream.token));
-    const hooks = this.rows(
-      'DELETE FROM hooks WHERE member IS NOT NULL AND member NOT IN (SELECT member FROM tokens) RETURNING name'
+    return answer({ revoked: gone.length, hooks: this.orphans() });
+  }
+
+  orphans() {
+    return this.rows(
+      'DELETE FROM hooks WHERE member IS NOT NULL AND member NOT IN (SELECT member FROM tokens WHERE expires IS NULL OR expires > ?) RETURNING name',
+      seconds()
     ).length;
-    return answer({ revoked: gone.length, hooks });
+  }
+
+  async throttled() {
+    if (!(await limited(this.env.DELIVERIES, this.meta('home')))) return null;
+    return fail(429, 'too many messages for this home; try again later', { 'retry-after': '60' });
   }
 
   revokeMember(member) {
@@ -499,6 +510,11 @@ export class NtfyHome {
     const handshake = verification(request, url, hook);
     if (handshake) return handshake;
     if (request.method !== 'POST') return fail(405, 'method not allowed', { allow: 'POST' });
+    const throttled = await this.throttled();
+    if (throttled) {
+      await request.body?.cancel();
+      return throttled;
+    }
     if (hook.secret && !signable(request.headers)) {
       await request.body?.cancel();
       return fail(401, 'the webhook signature did not verify');
@@ -662,6 +678,8 @@ export class NtfyHome {
   async publish(request, url, topic) {
     const member = await this.allowed(request, 'publish', [topic]);
     if (member instanceof Response) return member;
+    const throttled = await this.throttled();
+    if (throttled) return throttled;
     const bytes = await capped(request, MAX_BODY);
     if (!bytes) return fail(413, 'the message is too large');
     const get = (...names) => param(request, url, ...names);
@@ -689,6 +707,8 @@ export class NtfyHome {
     const member = await this.member(request);
     if (!member) return fail(401, 'unauthorized');
     if (!member.scopes.includes('publish')) return fail(403, 'forbidden');
+    const throttled = await this.throttled();
+    if (throttled) return throttled;
     const bytes = await capped(request, MAX_JSON);
     if (!bytes) return fail(413, 'the message is too large');
     const value = parsed(bytes);
@@ -762,6 +782,12 @@ export class NtfyHome {
     return new ReadableStream({
       pull: async (controller) => {
         for (;;) {
+          if (stream?.ended) {
+            try {
+              controller.close();
+            } catch {}
+            return;
+          }
           while (sources.length) {
             const next = sources[0].next();
             if (!next.done) {
@@ -773,10 +799,11 @@ export class NtfyHome {
           if (stream?.queue.length) {
             const line = stream.queue.shift();
             stream.bytes -= line.length;
+            this.queued -= line.length;
             controller.enqueue(encoder.encode(line));
             return;
           }
-          if (!stream || stream.ended) {
+          if (!stream) {
             controller.close();
             return;
           }
@@ -802,7 +829,8 @@ export class NtfyHome {
       const line = encode(message);
       stream.queue.push(line);
       stream.bytes += line.length;
-      if (stream.bytes > MAX_QUEUE) this.drop(stream);
+      this.queued += line.length;
+      if (stream.bytes > MAX_QUEUE || this.queued > MAX_QUEUED) this.drop(stream);
       else this.wake(stream);
     };
     this.streams.add(stream);
@@ -819,6 +847,7 @@ export class NtfyHome {
   drop(stream) {
     this.streams.delete(stream);
     stream.ended = true;
+    this.queued -= stream.bytes;
     stream.queue = [];
     stream.bytes = 0;
     this.wake(stream);
@@ -856,6 +885,7 @@ export class NtfyHome {
       return;
     }
     this.prune();
+    this.orphans();
     await this.ctx.storage.setAlarm(Date.now() + DAY_MS);
   }
 }

@@ -99,7 +99,7 @@ function stub(env, homeId) {
   return env.HOMES.get(env.HOMES.idFromName(homeId));
 }
 
-async function limited(binding, key) {
+export async function limited(binding, key) {
   if (!binding) return false;
   const { success } = await binding.limit({ key });
   return !success;
@@ -149,11 +149,6 @@ async function claim(request, env) {
   return fail(503, 'no free home id; try again');
 }
 
-function delivery(request, path) {
-  if (!['POST', 'PUT'].includes(request.method)) return false;
-  return path.startsWith('/hook/') || !/^\/(?:api|file|v1)(?:\/|$)/.test(path);
-}
-
 function about(path) {
   if (path === '/v1/health') return answer({ healthy: true });
   if (path === '/v1/config') return answer(CONFIG);
@@ -172,9 +167,6 @@ export async function ntfy(request, url, env) {
   const token = tokenOf(request, url);
   const homeId = ROUTED.exec(path)?.[1] ?? OWNED.exec(path)?.[1] ?? token?.slice(3, 11);
   if (!homeId) return fail(401, 'unauthorized');
-  if (delivery(request, path) && (await limited(env.DELIVERIES, homeId))) {
-    return fail(429, 'too many messages for this home; try again later', { 'retry-after': '60' });
-  }
   const headers = new Headers(request.headers);
   headers.set('x-home-id', homeId);
   headers.delete('x-home-token');
