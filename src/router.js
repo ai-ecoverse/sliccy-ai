@@ -3,6 +3,8 @@ import { get } from './get.js';
 import { mcpcat } from './mcpcat.js';
 import { publish } from './publish.js';
 
+export { NtfyHome } from './home.js';
+
 const types = {
   css: 'text/css; charset=utf-8',
   html: 'text/html; charset=utf-8',
