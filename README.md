@@ -173,7 +173,8 @@ The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`np
 - that the publish route refuses no token, refuses this repository's own real OIDC token (`not from ai-ecoverse/slicc-bios`, so GitHub's keys and the signature check are exercised), and refuses a tampered one (the deploy job has `id-token: write`);
 - that a follower attaches to a tray through `seven.sliccy.ai` (`role: follower`, waiting for a leader);
 - that a tray created through `seven.sliccy.ai` gets `www.sliccy.ai` capability URLs and its leader WebSocket connects through `seven.sliccy.ai`;
-- that a tray created through `seven.sliccy.ai` claims an ntfy home with its controller token (and a forged token is refused), and a signed GitHub webhook over 48 KiB reaches a subscriber as a verified message with an attachment;
+- that `ntfy.sliccy.ai` answers its health probe and refuses a topic without a token;
+- on `main` only, that a tray created through `seven.sliccy.ai` claims an ntfy home with its controller token (and a forged token is refused), and a signed GitHub webhook over 48 KiB reaches a subscriber as a verified message with an attachment. A branch version at 0% can't run this one: each Durable Object runs the version the deployment split assigns it, whatever the override header says, so every home still runs the stable version;
 - that Chromium boots <https://seven.sliccy.ai/> into `bash` in the terminal, cross-origin isolated. The screenshot is uploaded as a workflow artifact.
 
 Without `SLICCY_AI_VERSION` they run against whatever is live.

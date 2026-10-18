@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
+import { env } from 'node:process';
 import { before, test } from 'node:test';
 import { deployed, get, version } from './live.mjs';
 
@@ -7,13 +8,22 @@ const host = 'https://ntfy.sliccy.ai';
 const post = (url, headers, body) =>
   get(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body });
 
+const branch = env.SLICCY_AI_STABLE
+  ? 'a branch version at 0% runs no Durable Object: each one runs the version the deployment split assigns it, whatever the override header says'
+  : false;
+
 before(() => deployed(`${host}/v1/health`));
 
-test('a real tray leader claims a home, and a signed webhook reaches its subscribers', async () => {
+test('ntfy.sliccy.ai answers its probes from this worker and refuses topics without a token', async () => {
   const health = await get(`${host}/v1/health`);
   assert.deepEqual(await health.json(), { healthy: true });
   if (version) assert.equal(health.headers.get('x-sliccy-ai-version'), version);
   assert.equal((await get(`${host}/github/json?poll=1`)).status, 401);
+});
+
+test('a real tray leader claims a home, and a signed webhook reaches its subscribers', {
+  skip: branch,
+}, async () => {
   const tray = await post('https://seven.sliccy.ai/tray', {}, '{}');
   assert.equal(tray.status, 201);
   const { capabilities } = await tray.json();
