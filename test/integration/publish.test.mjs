@@ -96,4 +96,17 @@ test('a slicc-bios branch publishes through the route in workerd, and the router
   });
   assert.equal(main.status, 403);
   assert.equal(await bucket.get('seven/index.html'), null);
+  const gateway = await worker.dispatchFetch(
+    'https://seven.sliccy.ai/api/publish/files/index.html',
+    {
+      method: 'PUT',
+      headers: {
+        authorization: `Bearer ${await sign(claims('refs/heads/ntfy'))}`,
+        'content-length': '1',
+      },
+      body: 'x',
+    }
+  );
+  assert.equal(gateway.status, 403);
+  assert.equal(await bucket.get('branches/ntfy/index.html'), null);
 });

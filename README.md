@@ -87,6 +87,30 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
   - 60 s per connection, then close 1000.
 - **Other requests:** a plain request answers 426 with a short note, and every other path is a 404.
 
+**The ntfy gateway:** `https://ntfy.sliccy.ai/` receives webhooks at public URLs and serves them to a seven's tray over [ntfy](https://ntfy.sh)'s subscribe protocol, so native `ntfy`, seven's `ntfy` and the ntfy phone apps work against it unchanged (#42). It replaces SLICC v6's `webhook`. The code is in [`src/ntfy.js`](src/ntfy.js) (the edge), [`src/home.js`](src/home.js) (the Durable Object) and [`src/hook.js`](src/hook.js) (signatures and handshakes).
+- **A home per seven:** each seven owns a *home*, one `NtfyHome` Durable Object (SQLite storage) named by an 8-character `homeId` that never changes, so a home outlives the trays a seven leads.
+  - **Claim:** `POST /api/home` with `{ controllerToken }` creates a home only if `slicc-tray-hub` confirms that the token leads its tray. The gateway asks the tray's own Durable Object (`/internal/confirm-controller`, through the cross-script binding `TRAY_HUB`), and a refusal, an error or a timeout all answer 403. The answer is `{ homeId, ownerSecret, trayId }`; only the owner secret's SHA-256 is kept.
+  - **Rebind:** `POST /api/home/<homeId>/rebind`, with `Authorization: Bearer <ownerSecret>` and the new tray's `{ controllerToken }`. It needs both, so a leaked owner secret can't point the home at a tray its holder doesn't lead.
+  - **Delete:** `DELETE /api/home/<homeId>` removes every token, hook and message, and the home answers 410 from then on. A home nobody used for 90 days is deleted the same way.
+- **Tokens:** the owner mints one token per consumer with `POST /api/home/<homeId>/tokens` and `{ label, member, scopes, topics?, expires? }`.
+  - **The value** is `tk_` + the `homeId` + 21 random characters, the 32 characters of an ntfy token. It's shown once, in the mint's answer; only its SHA-256 is stored, and `GET …/tokens` lists everything else.
+  - **`member`** says whom it's for (`kernel`, `phone`, `device:<fingerprint>`, `seat:<id>`). **`scopes`** are `subscribe` (the default), `publish` and `hooks`; `topics` narrows them to a list; `expires` is a Unix time.
+  - **Revoking:** `DELETE …/tokens/<id>`, or `DELETE …/tokens?member=device:<fingerprint>` for one member and `?member=device` for every member of a kind. Every request looks its token up in the home, so a revoked token stops working at once, and its open streams end.
+  - **Accepted as** `Authorization: Bearer`, as the password (or user) of `Authorization: Basic`, or as `?auth=<base64url of the header>`.
+- **ntfy's protocol**, with every topic private to its home (`api`, `file`, `hook` and `v1` aren't topics):
+  - `GET /<topic>[,<topic>…]/json`, `/sse` and `/raw`, streaming (an `open` event, the backlog `since` asks for, live messages, a `keepalive` every 45 s) or with `poll=1`. `since` takes `all`, `latest`, `none`, a message id, a Unix time or a duration (`10m`, `2h`, `1d`). Needs `subscribe`.
+  - `GET /<topic>/auth` answers `{ "success": true }`, the apps' credential check.
+  - `POST`/`PUT /<topic>` with ntfy's headers or query parameters (`title`, `tags`, `priority`, `click`, `icon`, `message`, `filename`, `markdown`), and `POST /` with a JSON message. Needs `publish`.
+  - `GET /v1/health` and `GET /v1/config` answer without a token; every other request needs one.
+- **Hooks:** a token with `hooks` manages them with `POST /api/hooks` (`{ name, topic?, secret? }`; the topic defaults to the name), `GET /api/hooks` and `DELETE /api/hooks/<name>`. A hook's URL is `https://ntfy.sliccy.ai/hook/<id>`, an unguessable id.
+  - **Signatures:** a hook with a secret checks the signature before anything is stored, and answers 401 otherwise: GitHub's (and Meta's) `X-Hub-Signature-256`, Stripe's `Stripe-Signature`, Standard Webhooks (`webhook-*`, `svix-*`, with a `whsec_` secret or a raw one), Slack's `X-Slack-Signature`, and GitLab's `X-Gitlab-Token`. Timestamps may be at most 5 minutes off.
+  - **Handshakes** are answered at the edge and never stored: Meta's `hub.challenge` (the secret is the verify token), Microsoft Graph's `validationToken`, and Slack's `url_verification`.
+  - **The message:** `title` is the event (`X-GitHub-Event`, `X-Gitlab-Event`, or the body's `type`), `tags` names the provider, `message` is the body, and `headers` (an allowlist that never includes `Authorization`, cookies or `X-Gitlab-Token`), `verified` and `hook` are added. They reach a handler through `$NTFY_RAW`.
+- **Large bodies:** a body over 48 KiB, one that isn't UTF-8, or one whose JSON line would pass 60 KiB (ntfy's client reads lines of up to 64 KiB) becomes an `attachment`. Its URL, `https://ntfy.sliccy.ai/file/<id>.<ext>`, is a capability, as in ntfy: an unguessable id, served without a token, as `Content-Disposition: attachment` with `nosniff` and a sandboxing CSP, until the message expires.
+- **Limits:** messages are kept 7 days, at most 1,000 per home, with at most 100 MiB of attachments; the oldest go first. A webhook or message body is at most 25 MiB. A home holds at most 256 tokens, 64 hooks and 64 open streams.
+- **CORS:** every answer has `access-control-allow-origin: *`, and preflights allow the headers they ask for, so seven's page and the ntfy web app can call it. No cookies are read or set.
+- A slicc-bios branch named `ntfy` can't publish.
+
 **mcpcat's client document:** `https://mcpcat.sliccy.ai/oauth/client.json` is [mcpcat](https://github.com/ai-ecoverse/mcpcat)'s OAuth Client ID Metadata Document (mcpcat's spec §11.2). An authorization server fetches it to learn the client, so mcpcat needs no dynamic registration. The document is in [`src/mcpcat.js`](src/mcpcat.js), so it changes only through a reviewed PR here.
 - **What it says:** a public native client (`token_endpoint_auth_method: none`), signing in with the code flow and refresh tokens, with the loopback redirects `http://127.0.0.1/callback` and `http://localhost/callback`. The authorization server lets the port vary (RFC 8252 §7.3).
 - **How it's served:** `application/json`, `cache-control: public, max-age=3600`, `access-control-allow-origin: *`, and no cookies. Every other path on `mcpcat.sliccy.ai` is a 404, and a slicc-bios branch named `mcpcat` can't publish.
@@ -110,6 +134,7 @@ A `*.sliccy.ai` label is either a seven deployment (`seven`, or a published slic
 | `get` | the installer URLs |
 | `mcpcat` | mcpcat's OAuth client document |
 | `echo` | a WebSocket echo for tests |
+| `ntfy` | the ntfy-compatible webhook gateway |
 
 A label nobody published answers 404 through the wildcard record; there's no page there, seven or otherwise.
 
@@ -126,7 +151,7 @@ npm test
 npm run lint
 ```
 
-`npm test` runs the router in workerd through [Miniflare](https://github.com/cloudflare/workers-sdk/tree/main/packages/miniflare) against a local R2 bucket, using `wrangler.json` for the compatibility date and bindings.
+`npm test` runs the router in workerd through [Miniflare](https://github.com/cloudflare/workers-sdk/tree/main/packages/miniflare) against a local R2 bucket, using `wrangler.json` for the compatibility date and bindings. The ntfy tests run the `NtfyHome` Durable Object and a stand-in `slicc-tray-hub` that exports a `SessionTrayDurableObject`, reached through the same cross-script binding as in production.
 
 ## Deploy and post-deploy tests
 
@@ -148,6 +173,7 @@ The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`np
 - that the publish route refuses no token, refuses this repository's own real OIDC token (`not from ai-ecoverse/slicc-bios`, so GitHub's keys and the signature check are exercised), and refuses a tampered one (the deploy job has `id-token: write`);
 - that a follower attaches to a tray through `seven.sliccy.ai` (`role: follower`, waiting for a leader);
 - that a tray created through `seven.sliccy.ai` gets `www.sliccy.ai` capability URLs and its leader WebSocket connects through `seven.sliccy.ai`;
+- that a tray created through `seven.sliccy.ai` claims an ntfy home with its controller token (and a forged token is refused), and a signed GitHub webhook over 48 KiB reaches a subscriber as a verified message with an attachment;
 - that Chromium boots <https://seven.sliccy.ai/> into `bash` in the terminal, cross-origin isolated. The screenshot is uploaded as a workflow artifact.
 
 Without `SLICCY_AI_VERSION` they run against whatever is live.
