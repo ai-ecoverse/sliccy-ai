@@ -4,7 +4,8 @@ export const HEADER_BUDGET = 8192;
 const encoder = new TextEncoder();
 const KEPT =
   /^(content-type|user-agent|idempotency-key|x-request-id|x-hub-signature(-256)?|x-(github|gitlab|slack|shopify|event|webhook)-[a-z0-9-]+|stripe-[a-z0-9-]+|webhook-[a-z0-9-]+|svix-[a-z0-9-]+)$/;
-const SECRET_HEADERS = new Set(['x-gitlab-token']);
+const SECRET = /secret|token|passw|auth|cookie|api-?key|signing-key|credential/;
+const ECHO = /^[\x20-\x7e]{1,1024}$/;
 
 const hex = (bytes) =>
   [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -95,6 +96,10 @@ const SCHEMES = [
   ['x-gitlab-token', async (headers, body, secret) => same(headers.get('x-gitlab-token'), secret)],
 ];
 
+export function signable(headers) {
+  return SCHEMES.some(([header]) => headers.has(header));
+}
+
 export async function signed(headers, body, secret, now = Date.now()) {
   const scheme = SCHEMES.find(([header]) => headers.has(header));
   return scheme ? scheme[1](headers, body, secret, now) : false;
@@ -121,7 +126,7 @@ export function kept(headers) {
   const out = {};
   let total = 0;
   for (const [name, value] of headers) {
-    if (!KEPT.test(name) || SECRET_HEADERS.has(name)) continue;
+    if (!KEPT.test(name) || SECRET.test(name)) continue;
     total += name.length + value.length;
     if (total > HEADER_BUDGET) break;
     out[name] = value;
@@ -138,25 +143,29 @@ export function parsed(body) {
   }
 }
 
+const SAFE = {
+  'cache-control': 'no-store',
+  'x-content-type-options': 'nosniff',
+  'content-security-policy': "default-src 'none'; sandbox",
+};
 const text = (body, status = 200) =>
-  new Response(body, {
-    status,
-    headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
-  });
+  new Response(body, { status, headers: { 'content-type': 'text/plain; charset=utf-8', ...SAFE } });
+const echoed = (value) => (ECHO.test(value) ? text(value) : text('bad challenge\n', 400));
 
 export function verification(request, url, hook) {
   if (request.method === 'GET') {
     const challenge = url.searchParams.get('hub.challenge');
     if (url.searchParams.get('hub.mode') !== 'subscribe' || !challenge) return null;
+    const expected = hook.verify ?? hook.secret;
     const token = url.searchParams.get('hub.verify_token');
-    return hook.secret && !same(token, hook.secret) ? text('forbidden\n', 403) : text(challenge);
+    return expected && !same(token, expected) ? text('forbidden\n', 403) : echoed(challenge);
   }
   const validation = url.searchParams.get('validationToken');
-  return request.method === 'POST' && validation ? text(validation) : null;
+  return request.method === 'POST' && validation ? echoed(validation) : null;
 }
 
 export function slackChallenge(json) {
-  return json?.type === 'url_verification' && typeof json.challenge === 'string'
-    ? Response.json({ challenge: json.challenge })
-    : null;
+  if (json?.type !== 'url_verification' || typeof json.challenge !== 'string') return null;
+  if (!ECHO.test(json.challenge)) return text('bad challenge\n', 400);
+  return Response.json({ challenge: json.challenge }, { headers: SAFE });
 }

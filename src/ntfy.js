@@ -2,7 +2,12 @@ export const TOKEN = /^tk_[a-z0-9]{29}$/;
 export const HOME = /^[a-z0-9]{8}$/;
 export const LOWER = 'abcdefghijklmnopqrstuvwxyz0123456789';
 export const MIXED = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-export const CORS = { 'access-control-allow-origin': '*', 'access-control-expose-headers': '*' };
+export const CORS = {
+  'access-control-allow-origin': '*',
+  'access-control-expose-headers': '*',
+  'referrer-policy': 'no-referrer',
+};
+export const MAX_CLAIM = 4096;
 
 const ROUTED = /^\/(?:hook|file)\/([a-z0-9]{8})[a-z0-9]*(?:\.[A-Za-z0-9]{1,16})?$/;
 const OWNED = /^\/api\/home\/([a-z0-9]{8})(?:\/|$)/;
@@ -94,9 +99,43 @@ function stub(env, homeId) {
   return env.HOMES.get(env.HOMES.idFromName(homeId));
 }
 
+async function limited(binding, key) {
+  if (!binding) return false;
+  const { success } = await binding.limit({ key });
+  return !success;
+}
+
+export async function capped(request, max) {
+  if (Number(request.headers.get('content-length')) > max) return null;
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const parts = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > max) {
+      await reader.cancel();
+      return null;
+    }
+    parts.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+}
+
 async function claim(request, env) {
-  const body = await request.text();
-  if (body.length > 4096) return fail(413, 'the request body is too large');
+  const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
+  if (await limited(env.CLAIMS, ip)) return fail(429, 'too many claims; try again later');
+  const bytes = await capped(request, MAX_CLAIM);
+  if (!bytes) return fail(413, 'the request body is too large');
+  const body = new TextDecoder().decode(bytes);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const homeId = random(8);
     const response = await stub(env, homeId).fetch('https://home/api/home', {
@@ -108,6 +147,11 @@ async function claim(request, env) {
     await response.body?.cancel();
   }
   return fail(503, 'no free home id; try again');
+}
+
+function delivery(request, path) {
+  if (!['POST', 'PUT'].includes(request.method)) return false;
+  return path.startsWith('/hook/') || !/^\/(?:api|file|v1)(?:\/|$)/.test(path);
 }
 
 function about(path) {
@@ -128,6 +172,9 @@ export async function ntfy(request, url, env) {
   const token = tokenOf(request, url);
   const homeId = ROUTED.exec(path)?.[1] ?? OWNED.exec(path)?.[1] ?? token?.slice(3, 11);
   if (!homeId) return fail(401, 'unauthorized');
+  if (delivery(request, path) && (await limited(env.DELIVERIES, homeId))) {
+    return fail(429, 'too many messages for this home; try again later', { 'retry-after': '60' });
+  }
   const headers = new Headers(request.headers);
   headers.set('x-home-id', homeId);
   headers.delete('x-home-token');

@@ -19,32 +19,40 @@ const hub = `export class ${trays.class_name} {
 }
 export default { fetch: () => new Response('hub') };`;
 
-const worker = new Miniflare({
-  workers: [
-    {
-      name: 'sliccy-ai',
-      modules: true,
-      modulesRules: [{ type: 'ESModule', include: ['**/*.js'] }],
-      scriptPath: fileURLToPath(new URL(config.main, root)),
-      compatibilityDate: config.compatibility_date,
-      r2Buckets: [config.r2_buckets[0].binding],
-      bindings: { [config.version_metadata.binding]: { id: 'local' } },
-      serviceBindings: { [config.services[0].binding]: 'hub' },
-      durableObjects: {
-        [homes.name]: { className: homes.class_name, useSQLite: true },
-        [trays.name]: { className: trays.class_name, scriptName: 'hub' },
+const limits = Object.fromEntries(config.ratelimits.map(({ name, ...rest }) => [name, rest]));
+const start = (ratelimits) =>
+  new Miniflare({
+    workers: [
+      {
+        name: 'sliccy-ai',
+        modules: true,
+        modulesRules: [{ type: 'ESModule', include: ['**/*.js'] }],
+        scriptPath: fileURLToPath(new URL(config.main, root)),
+        compatibilityDate: config.compatibility_date,
+        r2Buckets: [config.r2_buckets[0].binding],
+        bindings: { [config.version_metadata.binding]: { id: 'local' } },
+        serviceBindings: { [config.services[0].binding]: 'hub' },
+        durableObjects: {
+          [homes.name]: { className: homes.class_name, useSQLite: true },
+          [trays.name]: { className: trays.class_name, scriptName: 'hub' },
+        },
+        ratelimits,
       },
-    },
-    {
-      name: 'hub',
-      modules: true,
-      script: hub,
-      compatibilityDate: config.compatibility_date,
-      durableObjects: { TRAYS: trays.class_name },
-    },
-  ],
+      {
+        name: 'hub',
+        modules: true,
+        script: hub,
+        compatibilityDate: config.compatibility_date,
+        durableObjects: { TRAYS: trays.class_name },
+      },
+    ],
+  });
+const worker = start({
+  CLAIMS: { ...limits.CLAIMS, simple: { limit: 1000, period: 60 } },
+  DELIVERIES: { ...limits.DELIVERIES, simple: { limit: 5000, period: 60 } },
 });
-after(() => worker.dispose());
+const strict = start(limits);
+after(() => Promise.all([worker.dispose(), strict.dispose()]));
 
 const host = 'https://ntfy.sliccy.ai';
 const call = (path, init = {}) => worker.dispatchFetch(`${host}${path}`, init);
@@ -251,7 +259,7 @@ test('streams the open event, the backlog and live messages; a revoked member is
     method: 'DELETE',
     headers: bearer(home.ownerSecret),
   });
-  assert.deepEqual(await revoked.json(), { revoked: 1 });
+  assert.deepEqual(await revoked.json(), { revoked: 1, hooks: 0 });
   assert.equal(await next(), null);
   assert.equal((await call('/news/json?poll=1', { headers: bearer(device) })).status, 401);
   assert.equal((await poll(owner, 'news')).length, 1);
@@ -514,4 +522,181 @@ test('deleting a home revokes its tokens, hooks and messages for good', async ()
   assert.equal((await call(new URL(url).pathname, { method: 'POST' })).status, 410);
   const again = await call(`/api/home/${home.homeId}`, { headers: bearer(home.ownerSecret) });
   assert.equal(again.status, 410);
+});
+
+test('claims are rate-limited per client, and messages per home', async () => {
+  const at = (ip) => ({ 'cf-connecting-ip': ip, 'content-type': 'application/json' });
+  const body = JSON.stringify({ controllerToken: 'tray1.leader' });
+  const strictly = (path, init) => strict.dispatchFetch(`${host}${path}`, init);
+  const { limit } = limits.CLAIMS.simple;
+  let home;
+  for (let n = 0; n < limit; n += 1) {
+    const claimed = await strictly('/api/home', { method: 'POST', headers: at('192.0.2.1'), body });
+    assert.equal(claimed.status, 201);
+    home = await claimed.json();
+  }
+  const refused = await strictly('/api/home', { method: 'POST', headers: at('192.0.2.1'), body });
+  assert.equal(refused.status, 429);
+  await refused.arrayBuffer();
+  const other = await strictly('/api/home', { method: 'POST', headers: at('192.0.2.2'), body });
+  assert.equal(other.status, 201);
+  await other.arrayBuffer();
+  const minted = await strictly(`/api/home/${home.homeId}/tokens`, {
+    method: 'POST',
+    headers: bearer(home.ownerSecret),
+    body: JSON.stringify({ member: 'kernel', scopes: ['publish'] }),
+  });
+  const { token } = await minted.json();
+  for (let n = 0; n < limits.DELIVERIES.simple.limit; n += 1) {
+    const sent = await strictly('/news', { method: 'POST', headers: bearer(token), body: 'x' });
+    assert.equal(sent.status, 200);
+    await sent.arrayBuffer();
+  }
+  const flooded = await strictly('/news', { method: 'POST', headers: bearer(token), body: 'x' });
+  assert.equal(flooded.status, 429);
+  assert.equal(flooded.headers.get('retry-after'), '60');
+});
+
+test('an oversized claim body is refused before it is read', async () => {
+  const big = await post('/api/home', {}, JSON.stringify({ controllerToken: 'x'.repeat(5000) }));
+  assert.equal(big.status, 413);
+});
+
+test('a home that was never claimed answers 404 for every path', async () => {
+  const fake = `tk_zzzzzzzz${'a'.repeat(21)}`;
+  assert.equal((await call('/api/home/zzzzzzzz', { headers: bearer('x') })).status, 404);
+  assert.equal((await call(`/hook/zzzzzzzz${'a'.repeat(24)}`, { method: 'POST' })).status, 404);
+  assert.equal((await call('/news/json?poll=1', { headers: bearer(fake) })).status, 404);
+});
+
+test('the owner rotates its secret, and the old one stops working', async () => {
+  const home = await claim();
+  const rotated = await post(`/api/home/${home.homeId}/owner`, bearer(home.ownerSecret), '');
+  assert.equal(rotated.status, 200);
+  const { ownerSecret } = await rotated.json();
+  assert.match(ownerSecret, /^[A-Za-z0-9]{43}$/);
+  const path = `/api/home/${home.homeId}`;
+  assert.equal((await call(path, { headers: bearer(home.ownerSecret) })).status, 401);
+  assert.equal((await call(path, { headers: bearer(ownerSecret) })).status, 200);
+});
+
+test("revoking a member's last token deletes its hooks; rotating a token keeps them", async () => {
+  const home = await claim();
+  const owner = bearer(home.ownerSecret);
+  const tokens = `/api/home/${home.homeId}/tokens`;
+  const listed = async () => (await (await call(tokens, { headers: owner })).json()).tokens;
+  const kernel = await mint(home, { member: 'kernel', scopes: ['subscribe', 'hooks'] });
+  const kept = await hook(kernel, { name: 'kept' });
+  const device = await mint(home, { member: 'device:3fa9c210', scopes: ['hooks'] });
+  const kicked = await hook(device, { name: 'kicked' });
+  assert.equal(kicked.member, 'device:3fa9c210');
+  const [old] = await listed();
+  const fresh = await mint(home, { member: 'kernel', scopes: ['subscribe', 'hooks'] });
+  const rotated = await call(`${tokens}/${old.id}`, { method: 'DELETE', headers: owner });
+  assert.deepEqual(await rotated.json(), { revoked: 1, hooks: 0 });
+  const gone = await call(`${tokens}?member=device`, { method: 'DELETE', headers: owner });
+  assert.deepEqual(await gone.json(), { revoked: 1, hooks: 1 });
+  const left = await (await call('/api/hooks', { headers: bearer(fresh) })).json();
+  assert.deepEqual(
+    left.hooks.map((row) => row.name),
+    ['kept']
+  );
+  assert.equal((await call(new URL(kicked.url).pathname, { method: 'POST' })).status, 404);
+  assert.equal((await call(new URL(kept.url).pathname, { method: 'POST' })).status, 200);
+});
+
+test('a signed hook refuses unsigned bodies, and keeps its verify token apart from its secret', async () => {
+  const home = await claim();
+  const kernel = await mint(home, { member: 'kernel', scopes: ['subscribe', 'hooks'] });
+  const meta = await hook(kernel, {
+    name: 'meta',
+    secret: 'app-secret-1',
+    verifyToken: 'verify-123',
+  });
+  const path = new URL(meta.url).pathname;
+  const unsigned = await call(path, { method: 'POST', body: 'x'.repeat(1024) });
+  assert.equal(unsigned.status, 401);
+  const challenge = (token, value = '42') =>
+    call(`${path}?hub.mode=subscribe&hub.verify_token=${token}&hub.challenge=${value}`);
+  const ok = await challenge('verify-123');
+  assert.equal(await ok.text(), '42');
+  assert.equal(ok.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal((await challenge('app-secret-1')).status, 403);
+  assert.equal((await challenge('verify-123', 'x'.repeat(2000))).status, 400);
+  const graph = await call(`${path}?validationToken=%01`, { method: 'POST' });
+  assert.equal(graph.status, 400);
+  const short = await post(
+    '/api/hooks',
+    bearer(kernel),
+    JSON.stringify({ name: 'b', verifyToken: 'x' })
+  );
+  assert.equal(short.status, 400);
+});
+
+test('secret-looking headers never reach subscribers', async () => {
+  const home = await claim();
+  const kernel = await mint(home, { member: 'kernel', scopes: ['subscribe', 'hooks'] });
+  const { url } = await hook(kernel, { name: 'plain' });
+  const sent = await call(new URL(url).pathname, {
+    method: 'POST',
+    headers: {
+      'x-webhook-secret': 's3cret',
+      'x-webhook-token': 't0ken',
+      'x-webhook-event': 'ping',
+      'idempotency-key': 'k1',
+    },
+    body: '{}',
+  });
+  assert.equal(sent.status, 200);
+  const [message] = await poll(kernel, 'plain');
+  assert.equal(message.headers['x-webhook-secret'], undefined);
+  assert.equal(message.headers['x-webhook-token'], undefined);
+  assert.equal(message.headers['x-webhook-event'], 'ping');
+  assert.equal(message.headers['idempotency-key'], 'k1');
+});
+
+test('JSON publishing checks the token before reading the body, and caps it at 1 MiB', async () => {
+  const home = await claim();
+  const reader = await mint(home, { member: 'phone', scopes: ['subscribe'] });
+  const writer = await mint(home, { member: 'kernel', scopes: ['publish'], topics: ['news'] });
+  const forged = `tk_${home.homeId}${'a'.repeat(21)}`;
+  const big = JSON.stringify({ topic: 'news', message: 'x'.repeat(2 * 1024 * 1024) });
+  assert.equal((await post('/', bearer(forged), big)).status, 401);
+  assert.equal((await post('/', bearer(reader), big)).status, 403);
+  assert.equal((await post('/', bearer(writer), big)).status, 413);
+  const elsewhere = JSON.stringify({ topic: 'alerts', message: 'x' });
+  assert.equal((await post('/', bearer(writer), elsewhere)).status, 403);
+});
+
+test('click and icon must be http(s) links, and raw output stays one line', async () => {
+  const home = await claim();
+  const token = await mint(home, { member: 'kernel', scopes: ['subscribe', 'publish'] });
+  const sent = await call('/news', {
+    method: 'POST',
+    headers: bearer(token, { click: 'javascript:alert(1)', icon: 'https://example.com/i.png' }),
+    body: 'a\rb\nc',
+  });
+  const message = await sent.json();
+  assert.equal(message.click, undefined);
+  assert.equal(message.icon, 'https://example.com/i.png');
+  assert.equal(sent.headers.get('referrer-policy'), 'no-referrer');
+  const raw = await call('/news/raw?poll=1', { headers: bearer(token) });
+  assert.equal(await raw.text(), 'a b c\n');
+});
+
+test('one token holds at most 8 open streams', async () => {
+  const home = await claim();
+  const token = await mint(home, { member: 'phone', scopes: ['subscribe'] });
+  const other = await mint(home, { member: 'kernel', scopes: ['subscribe'] });
+  const open = [];
+  for (let n = 0; n < 8; n += 1) {
+    const stream = await call('/news/json', { headers: bearer(token) });
+    assert.equal(stream.status, 200);
+    open.push(stream);
+  }
+  const ninth = await call('/news/json', { headers: bearer(token) });
+  assert.equal(ninth.status, 429);
+  const theirs = await call('/news/json', { headers: bearer(other) });
+  assert.equal(theirs.status, 200);
+  for (const stream of [...open, theirs]) await stream.body.cancel();
 });

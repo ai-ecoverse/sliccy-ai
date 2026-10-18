@@ -1,5 +1,15 @@
-import { event, kept, parsed, provider, signed, slackChallenge, verification } from './hook.js';
-import { answer, fail, HOME, MIXED, random, sha256, TOKEN } from './ntfy.js';
+import {
+  event,
+  kept,
+  parsed,
+  provider,
+  same,
+  signable,
+  signed,
+  slackChallenge,
+  verification,
+} from './hook.js';
+import { answer, capped, fail, HOME, MIXED, random, sha256, TOKEN } from './ntfy.js';
 
 export const RETENTION_S = 7 * 24 * 60 * 60;
 export const IDLE_S = 90 * 24 * 60 * 60;
@@ -12,8 +22,13 @@ export const KEEPALIVE_MS = 45_000;
 export const MAX_TOKENS = 256;
 export const MAX_HOOKS = 64;
 export const MAX_STREAMS = 64;
+export const MAX_TOKEN_STREAMS = 8;
+export const MAX_JSON = 1024 * 1024;
+export const MAX_QUEUE = 4 * 1024 * 1024;
 
 const CHUNK = 512 * 1024;
+const PAGE = 64;
+const LINK = /^https?:\/\/[^\s]{1,2040}$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SCOPES = ['subscribe', 'publish', 'hooks'];
 const TOPIC = /^[-_A-Za-z0-9]{1,64}$/;
@@ -42,7 +57,7 @@ const FORMATS = {
   raw: [
     'text/plain; charset=utf-8',
     (message) =>
-      message.event === 'message' ? `${message.message.replaceAll('\n', ' ')}\n` : '\n',
+      message.event === 'message' ? `${message.message.replace(/[\r\n]/g, ' ')}\n` : '\n',
   ],
 };
 
@@ -56,31 +71,6 @@ const text = (bytes) => {
     return null;
   }
 };
-
-async function capped(request, max) {
-  if (Number(request.headers.get('content-length')) > max) return null;
-  if (!request.body) return new Uint8Array();
-  const reader = request.body.getReader();
-  const parts = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.length;
-    if (total > max) {
-      await reader.cancel();
-      return null;
-    }
-    parts.push(value);
-  }
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const part of parts) {
-    out.set(part, at);
-    at += part.length;
-  }
-  return out;
-}
 
 async function body(request) {
   try {
@@ -133,7 +123,7 @@ const extension = (type) => TYPES[type?.split(';')[0].trim().toLowerCase()] ?? '
 const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)',
   'CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, hash TEXT UNIQUE, label TEXT, member TEXT, scopes TEXT, topics TEXT, created INTEGER, expires INTEGER, used INTEGER)',
-  'CREATE TABLE IF NOT EXISTS hooks (name TEXT PRIMARY KEY, id TEXT UNIQUE, topic TEXT, secret TEXT, created INTEGER)',
+  'CREATE TABLE IF NOT EXISTS hooks (name TEXT PRIMARY KEY, id TEXT UNIQUE, topic TEXT, secret TEXT, created INTEGER, member TEXT, verify TEXT)',
   'CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, time INTEGER, topic TEXT, json TEXT)',
   'CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY, msg TEXT, type TEXT, size INTEGER, expires INTEGER)',
   'CREATE TABLE IF NOT EXISTS chunks (file TEXT, n INTEGER, data BLOB, PRIMARY KEY (file, n))',
@@ -146,7 +136,20 @@ export class NtfyHome {
     this.sql = ctx.storage.sql;
     this.streams = new Set();
     this.timer = null;
+    this.ready = false;
+  }
+
+  exists() {
+    this.ready ||=
+      this.sql
+        .exec("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'meta'")
+        .one().n > 0;
+    return this.ready;
+  }
+
+  create() {
     for (const statement of SCHEMA) this.sql.exec(statement);
+    this.ready = true;
   }
 
   rows(query, ...bindings) {
@@ -179,6 +182,7 @@ export class NtfyHome {
     if (url.pathname === '/api/home' && request.method === 'POST') {
       return this.claim(request, homeId);
     }
+    if (!this.exists()) return fail(404, 'not found');
     if (this.meta('revoked')) return fail(410, 'this home was deleted');
     if (this.meta('home') !== homeId) return fail(404, 'not found');
     this.origin = url.origin;
@@ -226,15 +230,22 @@ export class NtfyHome {
     return (await this.confirm(trayId, controllerToken)) ? trayId : null;
   }
 
+  taken() {
+    return this.exists() && Boolean(this.meta('home') || this.meta('revoked'));
+  }
+
   async claim(request, homeId) {
-    if (this.meta('home') || this.meta('revoked')) return fail(409, 'this home id is taken');
+    if (this.taken()) return fail(409, 'this home id is taken');
     const trayId = await this.controller(request);
     if (!trayId) return fail(403, 'the tray hub did not confirm this controller token');
     const ownerSecret = random(43, MIXED);
+    const owner = await sha256(ownerSecret);
+    if (this.taken()) return fail(409, 'this home id is taken');
+    this.create();
     const now = seconds();
     this.remember({
       home: homeId,
-      owner: await sha256(ownerSecret),
+      owner,
       tray: trayId,
       created: now,
       rebound: now,
@@ -247,7 +258,7 @@ export class NtfyHome {
   async owner(request) {
     const [scheme, secret] = (request.headers.get('authorization') ?? '').split(' ');
     if (!/^bearer$/i.test(scheme) || !secret) return false;
-    return (await sha256(secret)) === this.meta('owner');
+    return same(await sha256(secret), this.meta('owner'));
   }
 
   async owned(request, url, rest) {
@@ -258,6 +269,7 @@ export class NtfyHome {
     if (section === undefined && request.method === 'GET') return this.describe();
     if (section === undefined && request.method === 'DELETE') return this.forget();
     if (section === 'rebind' && !id && request.method === 'POST') return this.rebind(request);
+    if (section === 'owner' && !id && request.method === 'POST') return this.rotate();
     if (section !== 'tokens') return fail(404, 'not found');
     if (id)
       return request.method === 'DELETE' ? this.revoke([id]) : fail(405, 'method not allowed');
@@ -285,6 +297,12 @@ export class NtfyHome {
     if (!trayId) return fail(403, 'the tray hub did not confirm this controller token');
     this.remember({ tray: trayId, rebound: seconds() });
     return answer({ homeId: this.meta('home'), trayId });
+  }
+
+  async rotate() {
+    const ownerSecret = random(43, MIXED);
+    this.remember({ owner: await sha256(ownerSecret) });
+    return answer({ homeId: this.meta('home'), ownerSecret });
   }
 
   async forget() {
@@ -353,7 +371,10 @@ export class NtfyHome {
   revoke(ids) {
     const gone = ids.filter((id) => this.one('DELETE FROM tokens WHERE id = ? RETURNING id', id));
     this.close((stream) => gone.includes(stream.token));
-    return answer({ revoked: gone.length });
+    const hooks = this.rows(
+      'DELETE FROM hooks WHERE member IS NOT NULL AND member NOT IN (SELECT member FROM tokens) RETURNING name'
+    ).length;
+    return answer({ revoked: gone.length, hooks });
   }
 
   revokeMember(member) {
@@ -379,6 +400,7 @@ export class NtfyHome {
     this.touch();
     return {
       id: row.id,
+      member: row.member,
       scopes: JSON.parse(row.scopes),
       topics: row.topics ? JSON.parse(row.topics) : null,
     };
@@ -413,6 +435,7 @@ export class NtfyHome {
       topic: row.topic,
       url: `${this.origin}/hook/${row.id}`,
       signed: Boolean(row.secret),
+      member: row.member,
       created: row.created,
     };
   }
@@ -428,15 +451,14 @@ export class NtfyHome {
     const name = value?.name;
     const topic = value?.topic ?? name;
     const secret = value?.secret ?? null;
+    const verify = value?.verifyToken ?? null;
+    const sized = (field) =>
+      field === null || (typeof field === 'string' && field.length >= 8 && field.length <= 256);
     if (typeof name !== 'string' || !NAME.test(name) || !this.topical(topic)) {
       return fail(400, 'a hook needs a name and a topic');
     }
-    if (
-      secret !== null &&
-      (typeof secret !== 'string' || secret.length < 8 || secret.length > 256)
-    ) {
-      return fail(400, 'a hook secret is 8 to 256 characters');
-    }
+    if (!sized(secret)) return fail(400, 'a hook secret is 8 to 256 characters');
+    if (!sized(verify)) return fail(400, 'a verify token is 8 to 256 characters');
     if (!this.visible(member, topic)) return fail(403, 'forbidden');
     if (this.one('SELECT name FROM hooks WHERE name = ?', name)) return fail(409, 'hook exists');
     if (this.one('SELECT COUNT(*) AS n FROM hooks').n >= MAX_HOOKS) {
@@ -448,14 +470,18 @@ export class NtfyHome {
       topic,
       secret,
       created: seconds(),
+      member: member.member,
+      verify,
     };
     this.sql.exec(
-      'INSERT INTO hooks (name, id, topic, secret, created) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO hooks (name, id, topic, secret, created, member, verify) VALUES (?, ?, ?, ?, ?, ?, ?)',
       row.name,
       row.id,
       row.topic,
       row.secret,
-      row.created
+      row.created,
+      row.member,
+      row.verify
     );
     return answer(this.shownHook(row), 201);
   }
@@ -473,6 +499,10 @@ export class NtfyHome {
     const handshake = verification(request, url, hook);
     if (handshake) return handshake;
     if (request.method !== 'POST') return fail(405, 'method not allowed', { allow: 'POST' });
+    if (hook.secret && !signable(request.headers)) {
+      await request.body?.cancel();
+      return fail(401, 'the webhook signature did not verify');
+    }
     const bytes = await capped(request, MAX_BODY);
     if (!bytes) return fail(413, 'the webhook body is too large');
     if (hook.secret && !(await signed(request.headers, bytes, hook.secret))) {
@@ -512,8 +542,8 @@ export class NtfyHome {
     if (title) message.title = title.slice(0, 1024);
     if (list.length) message.tags = list.slice(0, 16).map((tag) => tag.slice(0, 128));
     if (level) message.priority = level;
-    if (click) message.click = click.slice(0, 2048);
-    if (icon) message.icon = icon.slice(0, 2048);
+    if (click && LINK.test(click)) message.click = click;
+    if (icon && LINK.test(icon)) message.icon = icon;
     const short = note?.slice(0, 4096);
     const body = text(bytes);
     const inline =
@@ -656,12 +686,15 @@ export class NtfyHome {
   }
 
   async publishJson(request) {
-    const bytes = await capped(request, MAX_BODY);
-    const value = bytes && parsed(bytes);
+    const member = await this.member(request);
+    if (!member) return fail(401, 'unauthorized');
+    if (!member.scopes.includes('publish')) return fail(403, 'forbidden');
+    const bytes = await capped(request, MAX_JSON);
+    if (!bytes) return fail(413, 'the message is too large');
+    const value = parsed(bytes);
     if (!value || typeof value !== 'object') return fail(400, 'invalid JSON message');
     if (!this.topical(value.topic)) return fail(400, 'invalid topic');
-    const member = await this.allowed(request, 'publish', [value.topic]);
-    if (member instanceof Response) return member;
+    if (!this.visible(member, value.topic)) return fail(403, 'forbidden');
     const level = priority(value.priority == null ? null : String(value.priority));
     if (level === undefined) return fail(400, 'invalid priority');
     const message = this.store({
@@ -679,15 +712,31 @@ export class NtfyHome {
     return answer(message);
   }
 
-  select(names, marker) {
-    const marks = names.map(() => '?').join(', ');
-    const base = `SELECT json FROM messages WHERE topic IN (${marks})`;
+  replay(names, marker) {
     if (marker.none) return [];
+    const marks = names.map(() => '?').join(', ');
+    const base = `SELECT seq, json FROM messages WHERE topic IN (${marks})`;
     if (marker.latest) return this.rows(`${base} ORDER BY seq DESC LIMIT 1`, ...names);
+    const top = this.one('SELECT MAX(seq) AS seq FROM messages')?.seq ?? 0;
     const after = marker.id ? this.one('SELECT seq FROM messages WHERE id = ?', marker.id) : null;
-    if (after) return this.rows(`${base} AND seq > ? ORDER BY seq`, ...names, after.seq);
-    if (marker.time) return this.rows(`${base} AND time >= ? ORDER BY seq`, ...names, marker.time);
-    return this.rows(`${base} ORDER BY seq`, ...names);
+    const time = after ? 0 : (marker.time ?? 0);
+    const page = (seq) =>
+      this.rows(
+        `${base} AND seq > ? AND seq <= ? AND time >= ? ORDER BY seq LIMIT ${PAGE}`,
+        ...names,
+        seq,
+        top,
+        time
+      );
+    return (function* pages() {
+      let seq = after?.seq ?? 0;
+      for (;;) {
+        const rows = page(seq);
+        yield* rows;
+        if (rows.length < PAGE) return;
+        seq = rows.at(-1).seq;
+      }
+    })();
   }
 
   async subscribe(request, url, names, format) {
@@ -698,33 +747,81 @@ export class NtfyHome {
     if (!marker) return fail(400, 'invalid since');
     const [type, encode] = FORMATS[format];
     const headers = { 'content-type': type, 'cache-control': 'no-store' };
-    const backlog = this.select(names, marker).map((row) => encode(JSON.parse(row.json)));
-    if (poll) return new Response(backlog.join(''), { headers });
+    const backlog = this.replay(names, marker);
+    if (poll) return new Response(this.pipe(backlog, encode, null), { headers });
     if (this.streams.size >= MAX_STREAMS) return fail(429, 'too many subscriptions');
-    const { readable, writable } = new TransformStream();
-    const stream = this.open(writable.getWriter(), names, member.id, encode);
-    stream.write(this.marker('open', names));
-    for (const line of backlog) stream.write(line, true);
-    return new Response(readable, { headers });
+    const own = [...this.streams].filter((stream) => stream.token === member.id).length;
+    if (own >= MAX_TOKEN_STREAMS) return fail(429, 'too many subscriptions for this token');
+    const stream = this.open(names, member.id, encode);
+    const opened = { json: JSON.stringify(this.marker('open', names)) };
+    return new Response(this.pipe([opened], encode, stream, backlog), { headers });
+  }
+
+  pipe(first, encode, stream, rest = null) {
+    const sources = [first, rest].filter(Boolean).map((rows) => rows[Symbol.iterator]());
+    return new ReadableStream({
+      pull: async (controller) => {
+        for (;;) {
+          while (sources.length) {
+            const next = sources[0].next();
+            if (!next.done) {
+              controller.enqueue(encoder.encode(encode(JSON.parse(next.value.json))));
+              return;
+            }
+            sources.shift();
+          }
+          if (stream?.queue.length) {
+            const line = stream.queue.shift();
+            stream.bytes -= line.length;
+            controller.enqueue(encoder.encode(line));
+            return;
+          }
+          if (!stream || stream.ended) {
+            controller.close();
+            return;
+          }
+          await new Promise((resolve) => {
+            stream.wake = resolve;
+          });
+        }
+      },
+      cancel: () => {
+        if (stream) this.drop(stream);
+      },
+    });
   }
 
   marker(kind, names) {
     return { id: random(12, MIXED), time: seconds(), event: kind, topic: names.join(',') };
   }
 
-  open(writer, names, token, encode) {
-    const stream = {
-      names,
-      token,
-      write: (message, encoded = false) =>
-        writer.write(encoder.encode(encoded ? message : encode(message))).catch(() => {
-          this.streams.delete(stream);
-        }),
-      end: () => writer.close().catch(() => {}),
+  open(names, token, encode) {
+    const stream = { names, token, queue: [], bytes: 0, ended: false, wake: null };
+    stream.write = (message) => {
+      if (stream.ended) return;
+      const line = encode(message);
+      stream.queue.push(line);
+      stream.bytes += line.length;
+      if (stream.bytes > MAX_QUEUE) this.drop(stream);
+      else this.wake(stream);
     };
     this.streams.add(stream);
     this.timer ??= setInterval(() => this.keepalive(), KEEPALIVE_MS);
     return stream;
+  }
+
+  wake(stream) {
+    const resolve = stream.wake;
+    stream.wake = null;
+    resolve?.();
+  }
+
+  drop(stream) {
+    this.streams.delete(stream);
+    stream.ended = true;
+    stream.queue = [];
+    stream.bytes = 0;
+    this.wake(stream);
   }
 
   broadcast(message) {
@@ -749,15 +846,11 @@ export class NtfyHome {
   }
 
   close(test) {
-    for (const stream of [...this.streams]) {
-      if (!test(stream)) continue;
-      this.streams.delete(stream);
-      stream.end();
-    }
+    for (const stream of [...this.streams]) if (test(stream)) this.drop(stream);
   }
 
   async alarm() {
-    if (this.meta('revoked') || !this.meta('home')) return;
+    if (!this.exists() || this.meta('revoked') || !this.meta('home')) return;
     if (Number(this.meta('touched')) + IDLE_S < seconds()) {
       await this.forget();
       return;
