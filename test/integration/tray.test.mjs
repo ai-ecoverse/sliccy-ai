@@ -85,3 +85,60 @@ test('a follower page gets the hub supersede redirect as an answer it can read',
   assert.equal(response.headers.get('x-tray-location'), 'https://www.sliccy.ai/join/new');
   assert.deepEqual(await response.json(), { result: { action: 'redirect' } });
 });
+
+for (const path of [
+  '/api/tray/t1/biscotto',
+  '/api/tray/t1/biscotto/stop',
+  '/api/tray/t1/supersede',
+]) {
+  test(`forwards POST ${path} to the hub`, async () => {
+    const response = await worker.dispatchFetch(`https://seven.sliccy.ai${path}`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer controller', 'content-type': 'application/json' },
+      body: '{"id":"g1"}',
+    });
+    assert.equal(response.status, 201);
+    assert.deepEqual(await response.json(), {
+      url: `https://www.sliccy.ai${path}`,
+      method: 'POST',
+      cookie: null,
+      body: '{"id":"g1"}',
+    });
+  });
+}
+
+for (const path of [
+  '/api/tray/t1/other',
+  '/api/tray/t1/biscotto/stop/x',
+  '/api/tray/t1/biscottox',
+  '/api/tray/t1/biscotto/start',
+  '/api/tray/t1/x/biscotto',
+  '/api/tray/biscotto',
+  '/api/tray/t1/biscotto/../other',
+  '/api/tray/t1/biscotto/%2e%2e/other',
+  '/api/tray/t1/biscotto%2Fstop',
+]) {
+  test(`does not forward POST ${path}`, async () => {
+    const response = await worker.dispatchFetch(`https://seven.sliccy.ai${path}`, {
+      method: 'POST',
+      body: '{}',
+    });
+    assert.equal(response.status, 405);
+  });
+}
+
+test('the guest-seat routes take POST only', async () => {
+  for (const method of ['PUT', 'DELETE', 'PATCH', 'OPTIONS']) {
+    const response = await worker.dispatchFetch('https://seven.sliccy.ai/api/tray/t1/biscotto', {
+      method,
+      body: '{}',
+    });
+    assert.equal(response.status, 405);
+  }
+});
+
+test('a GET of a guest-seat route never reaches the hub', async () => {
+  const response = await worker.dispatchFetch('https://seven.sliccy.ai/api/tray/t1/biscotto');
+  assert.equal(response.status, 404);
+  await response.body?.cancel();
+});

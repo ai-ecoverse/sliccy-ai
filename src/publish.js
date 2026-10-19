@@ -6,7 +6,7 @@ const OWNER = 'ai-ecoverse';
 const JWKS_TTL_MS = 10 * 60 * 1000;
 const SKEW_S = 60;
 const MAX_BYTES = 100 * 1024 * 1024;
-const RESERVED = new Set(['seven', 'www', 'vault', 'mcpcat', 'get']);
+const RESERVED = new Set(['seven', 'www', 'vault', 'mcpcat', 'get', 'echo', 'ntfy']);
 const keys = { at: 0, byKid: new Map() };
 
 const normal = (branch, max) =>

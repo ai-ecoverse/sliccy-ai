@@ -1,6 +1,10 @@
+import { echo } from './echo.js';
 import { get } from './get.js';
 import { mcpcat } from './mcpcat.js';
+import { ntfy } from './ntfy.js';
 import { publish } from './publish.js';
+
+export { NtfyHome } from './home.js';
 
 const types = {
   css: 'text/css; charset=utf-8',
@@ -54,6 +58,8 @@ const SELF_FRAMED = {
 };
 const DEV = ['http://localhost:*', 'http://127.0.0.1:*'];
 const ANCESTORS_MS = 60_000;
+const PREVIEW_ANCESTORS = 48;
+const TRANSIENT = ['renovate-', 'gh-readonly-queue-'];
 const ancestors = { at: 0, list: null };
 
 export function forgetAncestors() {
@@ -63,17 +69,20 @@ export function forgetAncestors() {
 
 async function previews(env, now) {
   if (ancestors.list && now - ancestors.at < ANCESTORS_MS) return ancestors.list;
-  const labels = [];
+  const published = [];
   let cursor;
   do {
     const page = await env.BIOS.list({ prefix: 'branches/', delimiter: '/', cursor });
     for (const object of page.objects)
-      if (object.key.endsWith('.json')) labels.push(object.key.slice(9, -5));
+      if (object.key.endsWith('.json'))
+        published.push({ label: object.key.slice(9, -5), at: object.uploaded.getTime() });
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
-  ancestors.list = labels
-    .filter((label) => !label.startsWith('renovate-'))
-    .map((label) => `https://${label}.sliccy.ai`);
+  ancestors.list = published
+    .filter(({ label }) => !TRANSIENT.some((prefix) => label.startsWith(prefix)))
+    .sort((a, b) => b.at - a.at || (a.label < b.label ? -1 : 1))
+    .slice(0, PREVIEW_ANCESTORS)
+    .map(({ label }) => `https://${label}.sliccy.ai`);
   ancestors.at = now;
   return ancestors.list;
 }
@@ -124,6 +133,7 @@ async function fonts(url, request, env) {
 }
 
 const TRAY = /^\/(tray|controller\/[^/]+|join\/[^/]+|api\/tray\/[^/]+\/supersede)$/;
+const SEAT = /^\/api\/tray\/[^/]+\/biscotto(\/stop)?$/;
 
 async function tray(url, request, env) {
   const forwarded = new Request(
@@ -153,9 +163,12 @@ async function serve(request, env) {
   const url = new URL(request.url);
   if (url.hostname.split('.')[0] === 'mcpcat') return mcpcat(request, url);
   if (url.hostname.split('.')[0] === 'get') return get(request, url);
+  if (url.hostname.split('.')[0] === 'echo') return echo(request, url);
+  if (url.hostname.split('.')[0] === 'ntfy') return ntfy(request, url, env);
   const vault = vaultOf(url);
   if (vault) return asset(request, env, url, vault);
   if (TRAY.test(url.pathname)) return tray(url, request, env);
+  if (request.method === 'POST' && SEAT.test(url.pathname)) return tray(url, request, env);
   if (url.pathname.startsWith('/api/publish/')) return publish(request, env);
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });

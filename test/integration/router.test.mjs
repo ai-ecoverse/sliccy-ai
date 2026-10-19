@@ -172,3 +172,25 @@ test('the vault is served from R2 on vault.sliccy.ai, framed only by seven, whil
   assert.equal((await get('https://vault.sliccy.ai/tray', { method: 'POST' })).status, 405);
   assert.equal((await get('https://vault-x.sliccy.ai/')).status, 404);
 });
+
+test('echo.sliccy.ai echoes a real WebSocket in workerd', async () => {
+  const response = await get('https://echo.sliccy.ai/', {
+    headers: { upgrade: 'websocket', 'sec-websocket-protocol': 'echo' },
+  });
+  assert.equal(response.status, 101);
+  assert.equal(response.headers.get('sec-websocket-protocol'), 'echo');
+  const socket = response.webSocket;
+  socket.accept();
+  const got = new Promise((resolve) =>
+    socket.addEventListener('message', ({ data }) => resolve(data), { once: true })
+  );
+  socket.send('hello');
+  assert.equal(await got, 'hello');
+  const bin = new Promise((resolve) =>
+    socket.addEventListener('message', ({ data }) => resolve(data), { once: true })
+  );
+  socket.send(new Uint8Array([1, 2, 3]));
+  assert.deepEqual([...new Uint8Array(await bin)], [1, 2, 3]);
+  socket.close(1000, 'done');
+  assert.equal((await get('https://echo.sliccy.ai/')).status, 426);
+});
