@@ -86,6 +86,47 @@ test('a follower page gets the hub supersede redirect as an answer it can read',
   assert.deepEqual(await response.json(), { result: { action: 'redirect' } });
 });
 
+test('on www.sliccy.ai the tray routes are under /7, proxied without the prefix as on seven’s hosts', async () => {
+  const created = await worker.dispatchFetch('https://www.sliccy.ai/7/tray', {
+    method: 'POST',
+    headers: { cookie: 'ambient=1', 'content-type': 'application/json' },
+    body: '{"leader":true}',
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.headers.get('set-cookie'), null);
+  assert.deepEqual(await created.json(), {
+    url: 'https://www.sliccy.ai/tray',
+    method: 'POST',
+    cookie: null,
+    body: '{"leader":true}',
+  });
+  const moved = await worker.dispatchFetch('https://www.sliccy.ai/7/join/old', {
+    method: 'POST',
+    body: '{}',
+  });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.headers.get('x-tray-status'), '308');
+  assert.equal(moved.headers.get('x-tray-location'), 'https://www.sliccy.ai/join/new');
+  await moved.arrayBuffer();
+  const seat = await worker.dispatchFetch('https://www.sliccy.ai/7/api/tray/t1/biscotto/stop', {
+    method: 'POST',
+    body: '{"id":"g1"}',
+  });
+  assert.equal((await seat.json()).url, 'https://www.sliccy.ai/api/tray/t1/biscotto/stop');
+  const socket = (
+    await worker.dispatchFetch('https://www.sliccy.ai/7/controller/abc', {
+      headers: { upgrade: 'websocket', cookie: 'ambient=1' },
+    })
+  ).webSocket;
+  socket.accept();
+  const reply = new Promise((resolve) =>
+    socket.addEventListener('message', (event) => resolve(event.data))
+  );
+  socket.send('hello');
+  assert.equal(await reply, '/controller/abc null hello');
+  socket.close();
+});
+
 for (const path of [
   '/api/tray/t1/biscotto',
   '/api/tray/t1/biscotto/stop',

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { env } from 'node:process';
 import { before, test } from 'node:test';
 import { deployed, get, version } from './live.mjs';
 
@@ -50,4 +51,30 @@ test('leaves www.sliccy.ai and sliccy.ai to slicc-tray-hub', async () => {
   const apex = await get('https://sliccy.ai/', { redirect: 'manual' });
   assert.equal(apex.status, 301);
   assert.equal(apex.headers.get('x-sliccy-ai-version'), null);
+});
+
+const routed = !env.GITHUB_REF_NAME || env.GITHUB_REF_NAME === 'main';
+const onlyMain = routed
+  ? false
+  : 'the www.sliccy.ai routes reach a version only once main deploys them';
+
+test('serves seven at www.sliccy.ai/7/ next to six', { skip: onlyMain }, async () => {
+  const bios = await deployed('https://www.sliccy.ai/7/');
+  assert.equal(bios.status, 200);
+  assert.match(await bios.text(), /<title>SLICC BIOS<\/title>/);
+  assert.equal(bios.headers.get('x-frame-options'), 'SAMEORIGIN');
+  if (version) assert.equal(bios.headers.get('x-sliccy-ai-version'), version);
+  const sw = await get('https://www.sliccy.ai/7/sw.js');
+  assert.equal(sw.headers.get('service-worker-allowed'), '/');
+  const bare = await get('https://www.sliccy.ai/7', { redirect: 'manual' });
+  assert.equal(bare.status, 301);
+  assert.equal(bare.headers.get('location'), '/7/');
+  const ui = await get('https://www.sliccy.ai/os/', {
+    redirect: 'manual',
+    headers: { 'sec-fetch-dest': 'document' },
+  });
+  assert.equal(ui.status, 302);
+  assert.equal(ui.headers.get('location'), '/7/');
+  const six = await get('https://www.sliccy.ai/status');
+  assert.equal((await six.json()).service, 'slicc-tray-hub');
 });

@@ -44,14 +44,15 @@ export function vaultOf(url) {
 
 const VAULT_PAGES = { '/auth/callback': '/auth/callback.html' };
 
-function key(url, root) {
-  const label = url.hostname.split('.')[0];
+function key(url, root, label = url.hostname.split('.')[0]) {
   const page = root ? VAULT_PAGES[url.pathname] : undefined;
   const path = page ?? (url.pathname.endsWith('/') ? `${url.pathname}index.html` : url.pathname);
   return `${root ?? (label === 'seven' ? label : `branches/${label}`)}${path}`;
 }
 
 const SEVEN = 'https://seven.sliccy.ai';
+const WWW = 'https://www.sliccy.ai';
+const BIOS_ON_WWW = '/7';
 const SELF_FRAMED = {
   'content-security-policy': "frame-ancestors 'self'",
   'x-frame-options': 'SAMEORIGIN',
@@ -88,7 +89,7 @@ async function previews(env, now) {
 }
 
 export async function embedders(env, vault, now = Date.now()) {
-  if (vault.production) return [SEVEN, ...STAGING];
+  if (vault.production) return [SEVEN, WWW, ...STAGING];
   return [...(await previews(env, now)), ...DEV];
 }
 
@@ -159,8 +160,41 @@ async function tray(url, request, env) {
   return response;
 }
 
+const navigation = (headers) =>
+  headers.get('sec-fetch-mode') === 'navigate' || headers.get('sec-fetch-dest') === 'document';
+
+async function six(request, env) {
+  const upstream = await env.V6.fetch(request);
+  return upstream.webSocket ? upstream : new Response(upstream.body, upstream);
+}
+
+async function www(request, env, url) {
+  if (url.pathname === BIOS_ON_WWW)
+    return new Response(null, {
+      status: 301,
+      headers: { location: `${BIOS_ON_WWW}/${url.search}` },
+    });
+  if (url.pathname.startsWith('/os/')) {
+    return navigation(request.headers)
+      ? new Response(null, { status: 302, headers: { location: `${BIOS_ON_WWW}/` } })
+      : new Response('not found', { status: 404 });
+  }
+  if (!url.pathname.startsWith(`${BIOS_ON_WWW}/`)) return six(request, env);
+  const inner = new URL(url);
+  inner.pathname = url.pathname.slice(BIOS_ON_WWW.length);
+  if (TRAY.test(inner.pathname)) return tray(inner, request, env);
+  if (request.method === 'POST' && SEAT.test(inner.pathname)) return tray(inner, request, env);
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
+  }
+  const response = await asset(request, env, inner, null, 'seven');
+  if (inner.pathname === '/sw.js') response.headers.set('service-worker-allowed', '/');
+  return response;
+}
+
 async function serve(request, env) {
   const url = new URL(request.url);
+  if (url.origin === WWW) return www(request, env, url);
   if (url.hostname.split('.')[0] === 'mcpcat') return mcpcat(request, url);
   if (url.hostname.split('.')[0] === 'get') return get(request, url);
   if (url.hostname.split('.')[0] === 'echo') return echo(request, url);
@@ -177,7 +211,7 @@ async function serve(request, env) {
   return asset(request, env, url, null);
 }
 
-async function asset(request, env, url, vault) {
+async function asset(request, env, url, vault, label) {
   const root = vault?.root ?? null;
   const extra = vault ? await vaultHeaders(env, vault) : {};
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -189,7 +223,7 @@ async function asset(request, env, url, vault) {
       headers: { ...extra, 'content-type': 'application/json', 'cache-control': 'no-cache' },
     });
   }
-  const name = key(url, root);
+  const name = key(url, root, label);
   const object = await env.BIOS.get(name, { onlyIf: request.headers });
   if (!object) return new Response('not found', { status: 404, headers: extra });
   const type = types[name.split('.').pop()] ?? 'application/octet-stream';
