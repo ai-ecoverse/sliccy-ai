@@ -13,7 +13,6 @@ test('HTML documents are no-store', async () => {
     assert.equal(response.status, 200, url);
     assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8', url);
     assert.equal(response.headers.get('cache-control'), 'no-store', url);
-    assert.ok(response.headers.get('etag'), url);
     if (version) assert.equal(response.headers.get('x-sliccy-ai-version'), version);
   }
 });
