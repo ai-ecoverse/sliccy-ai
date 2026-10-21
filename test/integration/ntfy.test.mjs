@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { after, test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { Miniflare } from 'miniflare';
 
@@ -52,6 +53,11 @@ const worker = start({
   DELIVERIES: { ...limits.DELIVERIES, simple: { limit: 5000, period: 60 } },
 });
 const strict = start(limits);
+const fresh = async ({ simple: { period } }, budget) => {
+  const window = period * 1000;
+  const left = window - (Date.now() % window);
+  if (left < budget) await sleep(left + 50);
+};
 after(() => Promise.all([worker.dispose(), strict.dispose()]));
 
 const host = 'https://ntfy.sliccy.ai';
@@ -530,6 +536,7 @@ test('claims are rate-limited per client, and messages per home', async () => {
   const strictly = (path, init) => strict.dispatchFetch(`${host}${path}`, init);
   const { limit } = limits.CLAIMS.simple;
   let home;
+  await fresh(limits.CLAIMS, 2000);
   for (let n = 0; n < limit; n += 1) {
     const claimed = await strictly('/api/home', { method: 'POST', headers: at('192.0.2.1'), body });
     assert.equal(claimed.status, 201);
@@ -547,6 +554,7 @@ test('claims are rate-limited per client, and messages per home', async () => {
     body: JSON.stringify({ member: 'kernel', scopes: ['publish'] }),
   });
   const { token } = await minted.json();
+  await fresh(limits.DELIVERIES, 5000);
   for (let n = 0; n < limits.DELIVERIES.simple.limit; n += 1) {
     const sent = await strictly('/news', { method: 'POST', headers: bearer(token), body: 'x' });
     assert.equal(sent.status, 200);
