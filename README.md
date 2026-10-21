@@ -7,6 +7,8 @@ The Cloudflare Worker behind `*.sliccy.ai`. It serves the new SLICC from the R2 
 
 Each host is its own origin, so a branch gets its own OPFS and service worker and can't disturb `seven`.
 
+<https://www.sliccy.ai/7/> serves the same `main` release next to SLICC 6, the first step of the in-place upgrade from six (ai-ecoverse/slicc-bios#648, see [Seven on www.sliccy.ai](#seven-on-wwwsliccyai)).
+
 ## How it works
 
 [`src/router.js`](src/router.js) runs on the route `*.sliccy.ai/*`. For a request to `https://<label>.sliccy.ai/<path>`, it:
@@ -52,7 +54,7 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 - **Headers on every vault response:**
   - **CSP:** `default-src 'none'`, `script-src 'self' 'wasm-unsafe-eval'`, `style-src 'self'`, and `img-src 'self' data:`; `font-src`, `worker-src` and `manifest-src` are `'self'`; `connect-src 'self' https:` plus the local proxy on `localhost`/`127.0.0.1`; `base-uri 'none'` and `form-action 'none'`.
   - **`frame-ancestors`:**
-    - **The production vault** (`vault.sliccy.ai`) allows only `https://seven.sliccy.ai`, plus any staging host named in `STAGING` in `src/router.js`. A preview runs unreviewed branch code, including its own bios, which the vault would trust for attestations, so no preview may embed the production vault.
+    - **The production vault** (`vault.sliccy.ai`) allows only `https://seven.sliccy.ai` and `https://www.sliccy.ai`, plus any staging host named in `STAGING` in `src/router.js`. A preview runs unreviewed branch code, including its own bios, which the vault would trust for attestations, so no preview may embed the production vault.
     - **`vault-preview` and the vault's branch previews** allow the 48 most recently published slicc-bios branches (`https://<label>.sliccy.ai`, read from the `branches/<label>.json` manifests, ordered by when each manifest was last written, and cached for a minute), except `renovate-*` branches, which never embed a vault, and `gh-readonly-queue-*` branches, the transient merge-queue runs. A branch that hasn't published lately drops out until it publishes again, so the header stays bounded (about 4 KB at most) however many branches have ever been pushed; nothing outside the published previews is ever added, and no wildcard is used. They also allow `http://localhost:*` and `http://127.0.0.1:*`. They never list `seven.sliccy.ai`.
   - **Isolation:** `Cross-Origin-Embedder-Policy: require-corp`, `Cross-Origin-Resource-Policy: same-site` and `Cross-Origin-Opener-Policy: same-origin`.
   - **Transport and the rest:** `Strict-Transport-Security: max-age=31536000`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `Origin-Agent-Cluster: ?1`, so seven's script can't reach the vault's realm even when Chrome runs the same-site frame in seven's process.
@@ -115,11 +117,25 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 - **What it says:** a public native client (`token_endpoint_auth_method: none`), signing in with the code flow and refresh tokens, with the loopback redirects `http://127.0.0.1/callback` and `http://localhost/callback`. The authorization server lets the port vary (RFC 8252 §7.3).
 - **How it's served:** `application/json`, `cache-control: public, max-age=3600`, `access-control-allow-origin: *`, and no cookies. Every other path on `mcpcat.sliccy.ai` is a 404, and a slicc-bios branch named `mcpcat` can't publish.
 
-`www.sliccy.ai` and `sliccy.ai` have more specific routes to `slicc-tray-hub` (SLICC v6), so they never reach this worker, and `*.` doesn't match the bare domain. A proxied wildcard record `AAAA *.sliccy.ai 100::` makes every other subdomain resolve.
+`www.sliccy.ai/*` and `sliccy.ai/*` have more specific routes to `slicc-tray-hub` (SLICC v6), and `*.` doesn't match the bare domain. Only seven's paths on www (`/7`, `/7/*` and `/os/*`) have routes of their own here, more specific still (see below). A proxied wildcard record `AAAA *.sliccy.ai 100::` makes every other subdomain resolve.
 
 The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. Seven's HTML responses (`seven` and branch previews) send `Content-Security-Policy: frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`, so no other site can frame seven; vault hosts send their own `frame-ancestors` instead. The router never serves a manifest, because every key it builds has a `/` after the label.
 
 The bucket's lifecycle rule `branch-releases` expires everything under `branches/` 30 days after it was uploaded. Every push to a branch uploads all of its files again, so active branches stay up, and nobody has to clean up after deleted ones. `seven/` never expires.
+
+## Seven on www.sliccy.ai
+
+Seven shares `www.sliccy.ai` with SLICC 6 while six's users upgrade in place (ai-ecoverse/slicc-bios#648). The BIOS is `/7/` and its UI `/os/`; every other path stays six's.
+
+- **Routes:** `www.sliccy.ai/7`, `www.sliccy.ai/7/*` and `www.sliccy.ai/os/*` in `wrangler.json`, more specific than tray-hub's `www.sliccy.ai/*`. A www request that reaches this worker on another path anyway goes to six through `V6`, unchanged.
+- **`/7`** answers 301 to `/7/`, keeping the query.
+- **`/7/<path>`** is R2's `seven/<path>`, exactly as `seven.sliccy.ai` serves it: `index.html` for directories, the ETag with 304 and 412, and `frame-ancestors 'self'` with `X-Frame-Options` on HTML. `/7/sw.js` also gets `Service-Worker-Allowed: /`, so the BIOS registers its service worker at scope `/` and the UI is `/os/`. After the upgrade, seven's service worker answers `/` too.
+- **The tray hub under `/7`:** `POST /7/tray`, `/7/controller/<token>` (WebSocket included), `/7/join/<token>`, `POST /7/api/tray/<trayId>/supersede` and the guest-seat routes are the tray routes above without the `/7`: cookies dropped both ways, a 3xx answered as 200 with `x-tray-status` and `x-tray-location`. Seven could reach the hub on www directly, but then it would send www's cookies and couldn't read the hub's redirects.
+- **`/os/*`** is answered from OPFS by seven's service worker. A navigation that reaches the network instead (`Sec-Fetch-Mode: navigate` or `Sec-Fetch-Dest: document`: a first visit, a cleared site, a hard reload) gets a 302 to `/7/`, so it goes through the BIOS; anything else there is a 404. Without this route, tray-hub's single-page fallback would answer `/os/` with six's `index.html`.
+- **Nothing is written on www:** `/7/` answers only GET and HEAD outside the tray routes, so `/7/api/publish/*` is a 404 (405 for writes).
+- **The vault:** production seven runs on www too, so the production vault lets it embed (see the vault above). In a browser that hasn't upgraded yet, six's `/preview/` service worker serves agent-written HTML unsandboxed on www, and that HTML could frame the production vault. The vault's storage there is partitioned under www, though, and stays empty until seven runs in that browser, and the upgrade unregisters six's `/preview/` before seven stores anything (ai-ecoverse/slicc#4051).
+- **Fonts** on www stay tray-hub's own `/fonts/*`, same-origin for seven there.
+- **Later:** when `www.sliccy.ai/` serves the BIOS, `/7/` keeps working, because bookmarks and the service worker's script URL `/7/sw.js` must not move.
 
 ## Service hosts
 
@@ -127,7 +143,7 @@ A `*.sliccy.ai` label is either a seven deployment (`seven`, or a published slic
 
 | Label | What it is |
 |---|---|
-| `www`, and the bare `sliccy.ai` | SLICC v6 and the tray hub (`slicc-tray-hub`); they don't reach this worker |
+| `www`, and the bare `sliccy.ai` | SLICC v6 and the tray hub (`slicc-tray-hub`); only seven's `/7` and `/os/` paths on www reach this worker |
 | `vault` | slicc-vault's production release |
 | `vault-preview` | slicc-vault's `main` release, as the preview vault for seven's previews |
 | `vault-<label>` | slicc-vault's branch previews (the prefix `vault-`) |
@@ -175,7 +191,8 @@ The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`np
 - that a tray created through `seven.sliccy.ai` gets `www.sliccy.ai` capability URLs and its leader WebSocket connects through `seven.sliccy.ai`;
 - that `ntfy.sliccy.ai` answers its health probe and refuses a topic without a token;
 - on `main` only, that a tray created through `seven.sliccy.ai` claims an ntfy home with its controller token (and a forged token is refused), and a signed GitHub webhook over 48 KiB reaches a subscriber as a verified message with an attachment. A branch version at 0% can't run this one: each Durable Object runs the version the deployment split assigns it, whatever the override header says, so every home still runs the stable version;
-- that Chromium boots <https://seven.sliccy.ai/> into `bash` in the terminal, cross-origin isolated. The screenshot is uploaded as a workflow artifact.
+- that Chromium boots <https://seven.sliccy.ai/> into `bash` in the terminal, cross-origin isolated. The screenshot is uploaded as a workflow artifact;
+- on `main` only, that `www.sliccy.ai/7/` serves the BIOS with `Service-Worker-Allowed` on `sw.js`, `/7` and an `/os/` navigation go to `/7/`, `/status` is still six's, and Chromium boots `www.sliccy.ai/7/` into `bash` with the UI at `/os/`. A branch version can't run these: `wrangler versions upload` doesn't change routes, so www's paths reach the stable version until `main` deploys.
 
 Without `SLICCY_AI_VERSION` they run against whatever is live.
 

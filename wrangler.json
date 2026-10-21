@@ -6,7 +6,12 @@
   "compatibility_date": "2026-07-30",
   "workers_dev": false,
   "preview_urls": false,
-  "routes": [{ "pattern": "*.sliccy.ai/*", "zone_name": "sliccy.ai" }],
+  "routes": [
+    { "pattern": "*.sliccy.ai/*", "zone_name": "sliccy.ai" },
+    { "pattern": "www.sliccy.ai/7", "zone_name": "sliccy.ai" },
+    { "pattern": "www.sliccy.ai/7/*", "zone_name": "sliccy.ai" },
+    { "pattern": "www.sliccy.ai/os/*", "zone_name": "sliccy.ai" }
+  ],
   "r2_buckets": [{ "binding": "BIOS", "bucket_name": "slicc-bios" }],
   "version_metadata": { "binding": "VERSION" },
   "services": [{ "binding": "V6", "service": "slicc-tray-hub" }],
