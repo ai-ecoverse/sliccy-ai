@@ -234,6 +234,8 @@ test('everything else on www.sliccy.ai stays six’s, and /7/ never publishes or
     '/join/abc',
     '/auth/callback?nonce=n',
     '/fonts/AdobeClean-Regular.otf',
+    '/70',
+    '/7.html?x=1',
   ]) {
     const response = await get(`https://www.sliccy.ai${path}`);
     await response.arrayBuffer();
@@ -244,6 +246,8 @@ test('everything else on www.sliccy.ai stays six’s, and /7/ never publishes or
     'GET https://www.sliccy.ai/join/abc',
     'GET https://www.sliccy.ai/auth/callback?nonce=n',
     'GET https://www.sliccy.ai/fonts/AdobeClean-Regular.otf',
+    'GET https://www.sliccy.ai/70',
+    'GET https://www.sliccy.ai/7.html?x=1',
   ]);
   upstream.length = 0;
   const publish = await get('https://www.sliccy.ai/7/api/publish/manifest');
