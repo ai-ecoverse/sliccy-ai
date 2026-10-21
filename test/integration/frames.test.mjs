@@ -63,6 +63,8 @@ test('seven and its previews send frame headers on every answer they make', asyn
     self(412)
   );
   assert.deepEqual(await frames('https://seven.sliccy.ai/api/publish/manifest'), self(401));
+  assert.deepEqual(await frames('https://seven.sliccy.ai/fonts/not-a-font.css'), self(404));
+  assert.deepEqual(await frames('https://feat-shell.sliccy.ai/fonts/not-a-font.css'), self(404));
 });
 
 test('seven on www.sliccy.ai sends frame headers on every answer it makes, and six’s answers pass through untouched', async () => {

@@ -123,7 +123,7 @@ async function fonts(url, request, env) {
   const type = upstream.headers.get('content-type') ?? '';
   if (!upstream.ok || !type.startsWith('font/')) {
     await upstream.body?.cancel();
-    return new Response('not found', { status: 404 });
+    return null;
   }
   return new Response(upstream.body, {
     headers: { 'content-type': type, 'cache-control': 'public, max-age=86400' },
@@ -207,7 +207,9 @@ async function serve(request, env) {
   const vault = vaultOf(url);
   if (vault) return asset(request, env, url, vault);
   if (proxied(url, request)) return tray(url, request, env);
-  if (readable(request) && url.pathname.startsWith('/fonts/')) return fonts(url, request, env);
+  const font =
+    readable(request) && url.pathname.startsWith('/fonts/') && (await fonts(url, request, env));
+  if (font) return font;
   return framed(await seven(request, env, url), SELF_FRAMED);
 }
 
@@ -216,6 +218,7 @@ async function seven(request, env, url) {
   if (!readable(request)) {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
   }
+  if (url.pathname.startsWith('/fonts/')) return new Response('not found', { status: 404 });
   return asset(request, env, url, null);
 }
 
