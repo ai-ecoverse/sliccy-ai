@@ -241,7 +241,7 @@ async function asset(request, env, url, vault, label) {
   const headers = {
     ...extra,
     'content-type': type,
-    'cache-control': 'no-cache',
+    'cache-control': type.startsWith('text/html') ? 'no-store' : 'no-cache',
     etag: object.httpEtag,
   };
   if (!('body' in object)) {

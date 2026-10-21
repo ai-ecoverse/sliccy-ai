@@ -43,7 +43,7 @@ test('serves each host from its own prefix', async () => {
   const seven = await get('https://seven.sliccy.ai/');
   assert.equal(seven.status, 200);
   assert.equal(seven.headers.get('content-type'), 'text/html; charset=utf-8');
-  assert.equal(seven.headers.get('cache-control'), 'no-cache');
+  assert.equal(seven.headers.get('cache-control'), 'no-store');
   assert.match(await seven.text(), /seven/);
 
   const branch = await get('https://feat-shell.sliccy.ai/index.html');
