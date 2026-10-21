@@ -14,7 +14,7 @@ Each host is its own origin, so a branch gets its own OPFS and service worker an
 [`src/router.js`](src/router.js) runs on the route `*.sliccy.ai/*`. For a request to `https://<label>.sliccy.ai/<path>`, it:
 - returns the R2 object `seven/<path>` for `seven` and `branches/<label>/<path>` for every other label, with `index.html` for paths ending in `/`;
 - takes the content type from the file extension;
-- sends `cache-control: no-cache` and the object's ETag, so `If-None-Match` gets 304 and failed `If-Match`/`If-Unmodified-Since` get 412;
+- sends the object's ETag, so `If-None-Match` gets 304 and failed `If-Match`/`If-Unmodified-Since` get 412, with `cache-control: no-store` for HTML documents and `no-cache` for everything else;
 - answers 404 for anything missing and 405 for methods other than GET and HEAD;
 - names the worker version that answered in `x-sliccy-ai-version`.
 
@@ -59,6 +59,7 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
   - **Isolation:** `Cross-Origin-Embedder-Policy: require-corp`, `Cross-Origin-Resource-Policy: same-site` and `Cross-Origin-Opener-Policy: same-origin`.
   - **Transport and the rest:** `Strict-Transport-Security: max-age=31536000`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `Origin-Agent-Cluster: ?1`, so seven's script can't reach the vault's realm even when Chrome runs the same-site frame in seven's process.
 - **`/auth/callback`** serves the build's `auth/callback.html`, the OAuth callback six's relay sends to (source `origin`). It's the only extensionless page.
+- **Caching:** as for seven, HTML documents (`index.html`, `popup.html`, `button.html`, `/auth/callback`) are `no-store` and every other file is `no-cache`, each with its ETag.
 - **`GET /embedders.json`** answers `{ "embedders": [...] }`. It's the same list as `frame-ancestors`, from the same code, and the vault checks `event.origin` against it.
   - **Caching:** `cache-control: no-cache` and the ETag, as for seven.
   - **Cookies:** none set.
@@ -129,7 +130,7 @@ Seven shares `www.sliccy.ai` with SLICC 6 while six's users upgrade in place (ai
 
 - **Routes:** `www.sliccy.ai/7*` and `www.sliccy.ai/os/*` in `wrangler.json`, more specific than tray-hub's `www.sliccy.ai/*`. The `*` after `7` is what catches `/7?<query>`, which a bare `www.sliccy.ai/7` route doesn't match. A www request that reaches this worker on another path (`/70`, say) goes to six through `V6`, unchanged.
 - **`/7`** answers 301 to `/7/`, keeping the query.
-- **`/7/<path>`** is R2's `seven/<path>`, exactly as `seven.sliccy.ai` serves it: `index.html` for directories, the ETag with 304 and 412, and `frame-ancestors 'self'` with `X-Frame-Options` on every answer, as are `/7`'s 301 and `/os/`'s 302 and 404. `/7/sw.js` also gets `Service-Worker-Allowed: /`, so the BIOS registers its service worker at scope `/` and the UI is `/os/`. After the upgrade, seven's service worker answers `/` too.
+- **`/7/<path>`** is R2's `seven/<path>`, exactly as `seven.sliccy.ai` serves it: `index.html` for directories, the ETag with 304 and 412, `no-store` on HTML documents, and `frame-ancestors 'self'` with `X-Frame-Options` on every answer, as are `/7`'s 301 and `/os/`'s 302 and 404. `/7/sw.js` also gets `Service-Worker-Allowed: /`, so the BIOS registers its service worker at scope `/` and the UI is `/os/`. After the upgrade, seven's service worker answers `/` too.
 - **The tray hub under `/7`:** `POST /7/tray`, `/7/controller/<token>` (WebSocket included), `/7/join/<token>`, `POST /7/api/tray/<trayId>/supersede` and the guest-seat routes are the tray routes above without the `/7`: cookies dropped both ways, a 3xx answered as 200 with `x-tray-status` and `x-tray-location`. Seven could reach the hub on www directly, but then it would send www's cookies and couldn't read the hub's redirects.
 - **`/os/*`** is answered from OPFS by seven's service worker. A navigation that reaches the network instead (`Sec-Fetch-Mode: navigate` or `Sec-Fetch-Dest: document`: a first visit, a cleared site, a hard reload) gets a 302 to `/7/`, so it goes through the BIOS; anything else there is a 404. Without this route, tray-hub's single-page fallback would answer `/os/` with six's `index.html`.
 - **Nothing is written on www:** `/7/` answers only GET and HEAD outside the tray routes, so `/7/api/publish/*` is a 404 (405 for writes).
@@ -183,6 +184,7 @@ The Deploy workflow runs on every push:
 
 The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`npm run test:live`) send `Cloudflare-Workers-Version-Overrides: sliccy-ai="<version>"` on every request to `*.sliccy.ai`, so they reach the version under test, and they wait until `x-sliccy-ai-version` names it. They check:
 - serving `seven`;
+- `cache-control: no-store` on `seven.sliccy.ai/` and `vault.sliccy.ai/`, and `no-cache` on `bios.js`;
 - 404 for an unknown host;
 - 304/412 for conditional requests and 405 for writes;
 - that `www.sliccy.ai` and `sliccy.ai` still reach `slicc-tray-hub`;
