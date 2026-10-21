@@ -69,6 +69,9 @@ test('serves seven at www.sliccy.ai/7/ next to six', { skip: onlyMain }, async (
   const bare = await get('https://www.sliccy.ai/7', { redirect: 'manual' });
   assert.equal(bare.status, 301);
   assert.equal(bare.headers.get('location'), '/7/');
+  const query = await get('https://www.sliccy.ai/7?from=six', { redirect: 'manual' });
+  assert.equal(query.status, 301);
+  assert.equal(query.headers.get('location'), '/7/?from=six');
   const ui = await get('https://www.sliccy.ai/os/', {
     redirect: 'manual',
     headers: { 'sec-fetch-dest': 'document' },

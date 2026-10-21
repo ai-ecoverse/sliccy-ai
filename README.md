@@ -127,7 +127,7 @@ The bucket's lifecycle rule `branch-releases` expires everything under `branches
 
 Seven shares `www.sliccy.ai` with SLICC 6 while six's users upgrade in place (ai-ecoverse/slicc-bios#648). The BIOS is `/7/` and its UI `/os/`; every other path stays six's.
 
-- **Routes:** `www.sliccy.ai/7`, `www.sliccy.ai/7/*` and `www.sliccy.ai/os/*` in `wrangler.json`, more specific than tray-hub's `www.sliccy.ai/*`. A www request that reaches this worker on another path anyway goes to six through `V6`, unchanged.
+- **Routes:** `www.sliccy.ai/7*` and `www.sliccy.ai/os/*` in `wrangler.json`, more specific than tray-hub's `www.sliccy.ai/*`. The `*` after `7` is what catches `/7?<query>`, which a bare `www.sliccy.ai/7` route doesn't match. A www request that reaches this worker on another path (`/70`, say) goes to six through `V6`, unchanged.
 - **`/7`** answers 301 to `/7/`, keeping the query.
 - **`/7/<path>`** is R2's `seven/<path>`, exactly as `seven.sliccy.ai` serves it: `index.html` for directories, the ETag with 304 and 412, and `frame-ancestors 'self'` with `X-Frame-Options` on HTML. `/7/sw.js` also gets `Service-Worker-Allowed: /`, so the BIOS registers its service worker at scope `/` and the UI is `/os/`. After the upgrade, seven's service worker answers `/` too.
 - **The tray hub under `/7`:** `POST /7/tray`, `/7/controller/<token>` (WebSocket included), `/7/join/<token>`, `POST /7/api/tray/<trayId>/supersede` and the guest-seat routes are the tray routes above without the `/7`: cookies dropped both ways, a 3xx answered as 200 with `x-tray-status` and `x-tray-location`. Seven could reach the hub on www directly, but then it would send www's cookies and couldn't read the hub's redirects.
@@ -192,7 +192,7 @@ The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`np
 - that `ntfy.sliccy.ai` answers its health probe and refuses a topic without a token;
 - on `main` only, that a tray created through `seven.sliccy.ai` claims an ntfy home with its controller token (and a forged token is refused), and a signed GitHub webhook over 48 KiB reaches a subscriber as a verified message with an attachment. A branch version at 0% can't run this one: each Durable Object runs the version the deployment split assigns it, whatever the override header says, so every home still runs the stable version;
 - that Chromium boots <https://seven.sliccy.ai/> into `bash` in the terminal, cross-origin isolated. The screenshot is uploaded as a workflow artifact;
-- on `main` only, that `www.sliccy.ai/7/` serves the BIOS with `Service-Worker-Allowed` on `sw.js`, `/7` and an `/os/` navigation go to `/7/`, `/status` is still six's, and Chromium boots `www.sliccy.ai/7/` into `bash` with the UI at `/os/`. A branch version can't run these: `wrangler versions upload` doesn't change routes, so www's paths reach the stable version until `main` deploys.
+- on `main` only, that `www.sliccy.ai/7/` serves the BIOS with `Service-Worker-Allowed` on `sw.js`, `/7` (with its query) and an `/os/` navigation go to `/7/`, `/status` is still six's, and Chromium boots `www.sliccy.ai/7/` into `bash` with the UI at `/os/`. A branch version can't run these: `wrangler versions upload` doesn't change routes, so www's paths reach the stable version until `main` deploys.
 
 Without `SLICCY_AI_VERSION` they run against whatever is live.
 
