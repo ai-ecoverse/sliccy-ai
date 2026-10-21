@@ -56,10 +56,8 @@ const documents = [
   'https://vault.sliccy.ai/',
   'https://vault.sliccy.ai/popup.html',
   'https://vault.sliccy.ai/button.html',
-  'https://vault.sliccy.ai/auth/callback',
   'https://vault.sliccy.ai/auth/callback.html',
   'https://vault-preview.sliccy.ai/',
-  'https://vault-preview.sliccy.ai/auth/callback',
   'https://vault-feat-x.sliccy.ai/',
 ];
 
@@ -128,8 +126,15 @@ test('the other headers on an HTML document are unchanged', async () => {
   const bios = await get('https://www.sliccy.ai/7/');
   assert.equal(bios.headers.get('content-security-policy'), "frame-ancestors 'self'");
   assert.equal(bios.headers.get('service-worker-allowed'), null);
-  const vault = await get('https://vault.sliccy.ai/auth/callback');
+  const vault = await get('https://vault.sliccy.ai/popup.html');
   assert.match(vault.headers.get('content-security-policy'), /frame-ancestors https:\/\/seven/);
   assert.equal(vault.headers.get('cross-origin-embedder-policy'), 'require-corp');
   assert.equal(vault.headers.get('referrer-policy'), 'no-referrer');
+});
+
+test('a vault host has no extensionless /auth/callback page', async () => {
+  for (const host of ['vault', 'vault-preview']) {
+    const callback = await get(`https://${host}.sliccy.ai/auth/callback`);
+    assert.equal(callback.status, 404, host);
+  }
 });

@@ -43,11 +43,8 @@ export function vaultOf(url) {
     : null;
 }
 
-const VAULT_PAGES = { '/auth/callback': '/auth/callback.html' };
-
 function key(url, root, label = url.hostname.split('.')[0]) {
-  const page = root ? VAULT_PAGES[url.pathname] : undefined;
-  const path = page ?? (url.pathname.endsWith('/') ? `${url.pathname}index.html` : url.pathname);
+  const path = url.pathname.endsWith('/') ? `${url.pathname}index.html` : url.pathname;
   return `${root ?? (label === 'seven' ? label : `branches/${label}`)}${path}`;
 }
 
