@@ -18,7 +18,7 @@ Each host is its own origin, so a branch gets its own OPFS and service worker an
 - answers 404 for anything missing and 405 for methods other than GET and HEAD;
 - names the worker version that answered in `x-sliccy-ai-version`.
 
-`/fonts/*` on every host is passed through to SLICC v6's `slicc-tray-hub` worker, which serves Adobe Clean at `https://www.sliccy.ai/fonts/*`. It goes through a service binding (`V6`), because a plain `fetch` from a Worker to its own zone skips that zone's other Workers and would hit the placeholder origin. That makes the fonts same-origin for the new UI, which can't load them cross-origin because v6 sends no CORS headers. Only `font/*` responses pass through (anything else is a 404), and they're cached for a day.
+`/fonts/*` on every host is passed through to SLICC v6's `slicc-tray-hub` worker, which serves Adobe Clean at `https://www.sliccy.ai/fonts/*`. It goes through a service binding (`V6`), because a plain `fetch` from a Worker to its own zone skips that zone's other Workers and would hit the placeholder origin. That makes the fonts same-origin for the new UI, which can't load them cross-origin because v6 sends no CORS headers. Only `font/*` responses pass through (anything else is this worker's own 404, with seven's frame headers), and they're cached for a day.
 
 The tray hub's leader routes are passed through to `slicc-tray-hub` the same way, so a seven page can link devices as a tray leader without CORS:
 - `POST /tray`;
@@ -77,7 +77,7 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 | `playwright-cli`, `curlwright` | a three-line `sh` script, fixed here, that pipes slicc-cdp's latest `install.sh` to `sh -s -- --only <tool>` and passes on the caller's arguments (a release URL can't carry them) |
 
 - `/` lists the one-liners, and everything else is a 404.
-- Every answer is `text/plain`, with `cache-control: max-age=300`, no cookies and no CORS headers.
+- Every answer is `text/plain`, with `cache-control: max-age=300`, `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`, no cookies and no CORS headers.
 - Only GET and HEAD are answered.
 - A slicc-bios branch named `get` can't publish.
 
@@ -115,11 +115,11 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 
 **mcpcat's client document:** `https://mcpcat.sliccy.ai/oauth/client.json` is [mcpcat](https://github.com/ai-ecoverse/mcpcat)'s OAuth Client ID Metadata Document (mcpcat's spec §11.2). An authorization server fetches it to learn the client, so mcpcat needs no dynamic registration. The document is in [`src/mcpcat.js`](src/mcpcat.js), so it changes only through a reviewed PR here.
 - **What it says:** a public native client (`token_endpoint_auth_method: none`), signing in with the code flow and refresh tokens, with the loopback redirects `http://127.0.0.1/callback` and `http://localhost/callback`. The authorization server lets the port vary (RFC 8252 §7.3).
-- **How it's served:** `application/json`, `cache-control: public, max-age=3600`, `access-control-allow-origin: *`, and no cookies. Every other path on `mcpcat.sliccy.ai` is a 404, and a slicc-bios branch named `mcpcat` can't publish.
+- **How it's served:** `application/json`, `cache-control: public, max-age=3600`, `access-control-allow-origin: *`, and no cookies. Every answer, the 404 included, sends `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`. Every other path on `mcpcat.sliccy.ai` is a 404, and a slicc-bios branch named `mcpcat` can't publish.
 
 `www.sliccy.ai/*` and `sliccy.ai/*` have more specific routes to `slicc-tray-hub` (SLICC v6), and `*.` doesn't match the bare domain. Only seven's paths on www (`/7`, `/7/*` and `/os/*`) have routes of their own here, more specific still (see below). A proxied wildcard record `AAAA *.sliccy.ai 100::` makes every other subdomain resolve.
 
-The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. Seven's HTML responses (`seven` and branch previews) send `Content-Security-Policy: frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`, so no other site can frame seven; vault hosts send their own `frame-ancestors` instead. The router never serves a manifest, because every key it builds has a `/` after the label.
+The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. Every answer this worker makes for `seven` and the branch previews, whatever its status or type (404s, 405s, 304s, 412s, publish errors, scripts), sends `Content-Security-Policy: frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`, so no other site can frame seven; what's passed through from six (fonts, the tray routes) keeps six's headers, and vault hosts send their own `frame-ancestors` instead. The router never serves a manifest, because every key it builds has a `/` after the label.
 
 The bucket's lifecycle rule `branch-releases` expires everything under `branches/` 30 days after it was uploaded. Every push to a branch uploads all of its files again, so active branches stay up, and nobody has to clean up after deleted ones. `seven/` never expires.
 
@@ -129,7 +129,7 @@ Seven shares `www.sliccy.ai` with SLICC 6 while six's users upgrade in place (ai
 
 - **Routes:** `www.sliccy.ai/7*` and `www.sliccy.ai/os/*` in `wrangler.json`, more specific than tray-hub's `www.sliccy.ai/*`. The `*` after `7` is what catches `/7?<query>`, which a bare `www.sliccy.ai/7` route doesn't match. A www request that reaches this worker on another path (`/70`, say) goes to six through `V6`, unchanged.
 - **`/7`** answers 301 to `/7/`, keeping the query.
-- **`/7/<path>`** is R2's `seven/<path>`, exactly as `seven.sliccy.ai` serves it: `index.html` for directories, the ETag with 304 and 412, and `frame-ancestors 'self'` with `X-Frame-Options` on HTML. `/7/sw.js` also gets `Service-Worker-Allowed: /`, so the BIOS registers its service worker at scope `/` and the UI is `/os/`. After the upgrade, seven's service worker answers `/` too.
+- **`/7/<path>`** is R2's `seven/<path>`, exactly as `seven.sliccy.ai` serves it: `index.html` for directories, the ETag with 304 and 412, and `frame-ancestors 'self'` with `X-Frame-Options` on every answer, as are `/7`'s 301 and `/os/`'s 302 and 404. `/7/sw.js` also gets `Service-Worker-Allowed: /`, so the BIOS registers its service worker at scope `/` and the UI is `/os/`. After the upgrade, seven's service worker answers `/` too.
 - **The tray hub under `/7`:** `POST /7/tray`, `/7/controller/<token>` (WebSocket included), `/7/join/<token>`, `POST /7/api/tray/<trayId>/supersede` and the guest-seat routes are the tray routes above without the `/7`: cookies dropped both ways, a 3xx answered as 200 with `x-tray-status` and `x-tray-location`. Seven could reach the hub on www directly, but then it would send www's cookies and couldn't read the hub's redirects.
 - **`/os/*`** is answered from OPFS by seven's service worker. A navigation that reaches the network instead (`Sec-Fetch-Mode: navigate` or `Sec-Fetch-Dest: document`: a first visit, a cleared site, a hard reload) gets a 302 to `/7/`, so it goes through the BIOS; anything else there is a 404. Without this route, tray-hub's single-page fallback would answer `/os/` with six's `index.html`.
 - **Nothing is written on www:** `/7/` answers only GET and HEAD outside the tray routes, so `/7/api/publish/*` is a 404 (405 for writes).

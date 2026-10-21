@@ -1,3 +1,5 @@
+import { UNFRAMED } from './frames.js';
+
 const RELEASES = 'https://github.com/ai-ecoverse';
 const latest = (repo) => `${RELEASES}/${repo}/releases/latest/download/install.sh`;
 
@@ -13,7 +15,11 @@ export const TOOLS = {
   mcpcat: { repo: 'mcpcat', about: 'mcpcat, the MCP client and proxy' },
 };
 
-const HEADERS = { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'max-age=300' };
+const HEADERS = {
+  ...UNFRAMED,
+  'content-type': 'text/plain; charset=utf-8',
+  'cache-control': 'max-age=300',
+};
 
 export function wrapper(tool) {
   const { repo, only } = TOOLS[tool];
