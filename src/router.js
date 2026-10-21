@@ -1,4 +1,5 @@
 import { echo } from './echo.js';
+import { framed, SELF_FRAMED } from './frames.js';
 import { get } from './get.js';
 import { mcpcat } from './mcpcat.js';
 import { ntfy } from './ntfy.js';
@@ -53,10 +54,6 @@ function key(url, root, label = url.hostname.split('.')[0]) {
 const SEVEN = 'https://seven.sliccy.ai';
 const WWW = 'https://www.sliccy.ai';
 const BIOS_ON_WWW = '/7';
-const SELF_FRAMED = {
-  'content-security-policy': "frame-ancestors 'self'",
-  'x-frame-options': 'SAMEORIGIN',
-};
 const DEV = ['http://localhost:*', 'http://127.0.0.1:*'];
 const ANCESTORS_MS = 60_000;
 const PREVIEW_ANCESTORS = 48;
@@ -135,6 +132,9 @@ async function fonts(url, request, env) {
 
 const TRAY = /^\/(tray|controller\/[^/]+|join\/[^/]+|api\/tray\/[^/]+\/supersede)$/;
 const SEAT = /^\/api\/tray\/[^/]+\/biscotto(\/stop)?$/;
+const proxied = (url, request) =>
+  TRAY.test(url.pathname) || (request.method === 'POST' && SEAT.test(url.pathname));
+const readable = (request) => request.method === 'GET' || request.method === 'HEAD';
 
 async function tray(url, request, env) {
   const forwarded = new Request(
@@ -169,6 +169,16 @@ async function six(request, env) {
 }
 
 async function www(request, env, url) {
+  const bios = url.pathname.startsWith(`${BIOS_ON_WWW}/`);
+  if (!bios && url.pathname !== BIOS_ON_WWW && !url.pathname.startsWith('/os/'))
+    return six(request, env);
+  const inner = new URL(url);
+  inner.pathname = url.pathname.slice(BIOS_ON_WWW.length);
+  if (bios && proxied(inner, request)) return tray(inner, request, env);
+  return framed(await sevenOnWww(request, env, url, inner), SELF_FRAMED);
+}
+
+async function sevenOnWww(request, env, url, inner) {
   if (url.pathname === BIOS_ON_WWW)
     return new Response(null, {
       status: 301,
@@ -179,12 +189,7 @@ async function www(request, env, url) {
       ? new Response(null, { status: 302, headers: { location: `${BIOS_ON_WWW}/` } })
       : new Response('not found', { status: 404 });
   }
-  if (!url.pathname.startsWith(`${BIOS_ON_WWW}/`)) return six(request, env);
-  const inner = new URL(url);
-  inner.pathname = url.pathname.slice(BIOS_ON_WWW.length);
-  if (TRAY.test(inner.pathname)) return tray(inner, request, env);
-  if (request.method === 'POST' && SEAT.test(inner.pathname)) return tray(inner, request, env);
-  if (request.method !== 'GET' && request.method !== 'HEAD') {
+  if (!readable(request)) {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
   }
   const response = await asset(request, env, inner, null, 'seven');
@@ -201,13 +206,16 @@ async function serve(request, env) {
   if (url.hostname.split('.')[0] === 'ntfy') return ntfy(request, url, env);
   const vault = vaultOf(url);
   if (vault) return asset(request, env, url, vault);
-  if (TRAY.test(url.pathname)) return tray(url, request, env);
-  if (request.method === 'POST' && SEAT.test(url.pathname)) return tray(url, request, env);
+  if (proxied(url, request)) return tray(url, request, env);
+  if (readable(request) && url.pathname.startsWith('/fonts/')) return fonts(url, request, env);
+  return framed(await seven(request, env, url), SELF_FRAMED);
+}
+
+async function seven(request, env, url) {
   if (url.pathname.startsWith('/api/publish/')) return publish(request, env);
-  if (request.method !== 'GET' && request.method !== 'HEAD') {
+  if (!readable(request)) {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
   }
-  if (url.pathname.startsWith('/fonts/')) return fonts(url, request, env);
   return asset(request, env, url, null);
 }
 
@@ -228,7 +236,6 @@ async function asset(request, env, url, vault, label) {
   if (!object) return new Response('not found', { status: 404, headers: extra });
   const type = types[name.split('.').pop()] ?? 'application/octet-stream';
   const headers = {
-    ...(!root && type.startsWith('text/html') ? SELF_FRAMED : {}),
     ...extra,
     'content-type': type,
     'cache-control': 'no-cache',

@@ -1,3 +1,5 @@
+import { UNFRAMED } from './frames.js';
+
 export const CLIENT = {
   client_id: 'https://mcpcat.sliccy.ai/oauth/client.json',
   client_name: 'mcpcat',
@@ -10,7 +12,11 @@ export const CLIENT = {
 };
 
 export function mcpcat(request, url) {
-  const headers = { 'cache-control': 'public, max-age=3600', 'access-control-allow-origin': '*' };
+  const headers = {
+    ...UNFRAMED,
+    'cache-control': 'public, max-age=3600',
+    'access-control-allow-origin': '*',
+  };
   if (url.pathname !== '/oauth/client.json')
     return new Response('not found', { status: 404, headers });
   if (request.method !== 'GET' && request.method !== 'HEAD')
