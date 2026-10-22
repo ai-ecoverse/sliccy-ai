@@ -169,17 +169,24 @@ npm run lint
 
 `npm test` runs the router in workerd through [Miniflare](https://github.com/cloudflare/workers-sdk/tree/main/packages/miniflare) against a local R2 bucket, using `wrangler.json` for the compatibility date and bindings. The ntfy tests run the `NtfyHome` Durable Object and a stand-in `slicc-tray-hub` that exports a `SessionTrayDurableObject`, reached through the same cross-script binding as in production.
 
-## Deploy and post-deploy tests
+## CI, releases and deploys
 
-The Deploy workflow runs on every push:
-- **`main`:** `wrangler deploy`, then the post-deploy tests against the version it just deployed.
-- **Any other branch:**
-  1. `wrangler versions upload`;
-  2. add that version to the live deployment at 0% of the traffic;
-  3. run the post-deploy tests against it;
-  4. put the previous version back at 100% alone, even if the tests fail.
+CI is one caller workflow, [`ci.yml`](.github/workflows/ci.yml), that runs [slicc-shared-web's `pipeline.yml`](https://github.com/ai-ecoverse/slicc-shared-web#pipeline) at the same v2 tag as the `@ai-ecoverse/slicc-shared-web` devDependency, with `secrets: inherit`, on pull requests, in the merge queue and on `main`:
+- **Everywhere:** `npm run lint`.
+- **Pull requests and the merge queue:** `npm test` (`test/integration/*.test.mjs`), split across the pipeline's shards. `ci / integration` and `ci / review` are the checks to require.
+- **Pull requests:** the branch's post-deploy tests (the pipeline's `deploy` input, in the `staging` environment, see below), then a Claude and a Codex review.
+- **`main`:** semantic-release, in the `production` environment. It tags `vX.Y.Z` and writes a GitHub release from the conventional commits; nothing goes to npm (`release.config.mjs` has no npm plugin). `fix:` and `feat:` release; `chore:`, `ci:`, `docs:` and `test:` don't, so a Renovate `chore(deps)` merge deploys nothing until the next release.
 
-  Production traffic never reaches the branch's version.
+[`scripts/deploy.mjs`](scripts/deploy.mjs) does both deploys:
+- **A release (`after-release`):** `wrangler deploy`, tagged with the release, then the post-deploy tests against the version it just deployed. A push to `main` that releases nothing deploys nothing.
+- **A pull request (`deploy`):**
+  1. wait while another branch's version is in the deployment (up to 10 minutes);
+  2. `wrangler versions upload`;
+  3. add that version to the live deployment at 0% of the traffic, next to the stable version read just before;
+  4. run the post-deploy tests against it;
+  5. put the version at 100% back alone, even if the tests fail.
+
+  Production traffic never reaches the branch's version. Each switch is checked against the deployment history afterwards: if another deployment (a release, say) landed between reading the deployment and writing it, that deployment is put back and the job fails.
 
 The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`npm run test:live`) send `Cloudflare-Workers-Version-Overrides: sliccy-ai="<version>"` on every request to `*.sliccy.ai`, so they reach the version under test, and they wait until `x-sliccy-ai-version` names it. They check:
 - serving `seven`;
@@ -187,32 +194,34 @@ The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`np
 - 404 for an unknown host;
 - 304/412 for conditional requests and 405 for writes;
 - that `www.sliccy.ai` and `sliccy.ai` still reach `slicc-tray-hub`;
-- that the publish route refuses no token, refuses this repository's own real OIDC token (`not from ai-ecoverse/slicc-bios`, so GitHub's keys and the signature check are exercised), and refuses a tampered one (the deploy job has `id-token: write`);
+- that the publish route refuses no token, refuses this repository's own real OIDC token (`not from ai-ecoverse/slicc-bios`, so GitHub's keys and the signature check are exercised), and refuses a tampered one (both deploying jobs have `id-token: write`);
 - that a follower attaches to a tray through `seven.sliccy.ai` (`role: follower`, waiting for a leader);
 - that a tray created through `seven.sliccy.ai` gets `www.sliccy.ai` capability URLs and its leader WebSocket connects through `seven.sliccy.ai`;
 - that `ntfy.sliccy.ai` answers its health probe and refuses a topic without a token;
-- on `main` only, that a tray created through `seven.sliccy.ai` claims an ntfy home with its controller token (and a forged token is refused), and a signed GitHub webhook over 48 KiB reaches a subscriber as a verified message with an attachment. A branch version at 0% can't run this one: each Durable Object runs the version the deployment split assigns it, whatever the override header says, so every home still runs the stable version;
-- that Chromium boots <https://seven.sliccy.ai/> into `bash` in the terminal, cross-origin isolated. The screenshot is uploaded as a workflow artifact;
-- on `main` only, that `www.sliccy.ai/7/` serves the BIOS with `Service-Worker-Allowed` on `sw.js`, `/7` (with its query) and an `/os/` navigation go to `/7/`, `/status` is still six's, and Chromium boots `www.sliccy.ai/7/` into `bash` with the UI at `/os/`. A branch version can't run these: `wrangler versions upload` doesn't change routes, so www's paths reach the stable version until `main` deploys.
+- after a release only, that a tray created through `seven.sliccy.ai` claims an ntfy home with its controller token (and a forged token is refused), and a signed GitHub webhook over 48 KiB reaches a subscriber as a verified message with an attachment. A branch version at 0% can't run this one: each Durable Object runs the version the deployment split assigns it, whatever the override header says, so every home still runs the stable version;
+- that Chromium boots <https://seven.sliccy.ai/> into `bash` in the terminal, cross-origin isolated;
+- after a release only, that `www.sliccy.ai/7/` serves the BIOS with `Service-Worker-Allowed` on `sw.js`, `/7` (with its query) and an `/os/` navigation go to `/7/`, `/status` is still six's, and Chromium boots `www.sliccy.ai/7/` into `bash` with the UI at `/os/`. A branch version can't run these: `wrangler versions upload` doesn't change routes, so www's paths reach the stable version until a release deploys.
 
 Without `SLICCY_AI_VERSION` they run against whatever is live.
 
-The workflow needs the `CLOUDFLARE_API_TOKEN` secret, an account token with:
+Both need the `SLICCY_AI_DEPLOY_TOKEN` secret, an account token with:
 - Workers Scripts Write on the account;
 - Workers Routes Write and Zone Read on `sliccy.ai`.
 
-That token can change every Worker on the account, SLICC v6's `slicc-tray-hub` included. So it is **not** a repository secret, which any pushed branch could read by changing the workflow. It's stored in two GitHub environments, and the deploy job runs in one of them:
-- **`production`:** used by `main`. Its deployment branch policy allows `main` only, so a branch that names `production` in its workflow is refused before the job starts.
-- **`preview`:** used by every other branch, with no approval step, so a branch deploys as soon as it's pushed. Anyone who can push a branch here can use the token through the workflow; forks never get it.
+`scripts/deploy.mjs` hands it to wrangler as `CLOUDFLARE_API_TOKEN`, and runs the post-deploy tests without it. The pipeline never passes its own `CLOUDFLARE_API_TOKEN` (the reviewers' screenshot token) to `deploy` or `after-release`, hence the separate name.
+
+That token can change every Worker on the account, SLICC v6's `slicc-tray-hub` included. So it is **not** a repository secret, which any pushed branch could read by changing the workflow. It's stored in two GitHub environments, and `ci.yml` hands it only to the two jobs that deploy (`deploy-secrets` and `release-secrets`):
+- **`production`:** the release job's. Its deployment branch policy allows `main` only, so a branch that names `production` in its workflow is refused before the job starts.
+- **`staging`:** the pipeline's `deploy` job's, on every pull request, with no approval step, so a pull request deploys as soon as it's pushed. Anyone who can push a branch here can use the token through the workflow; forks never get it.
 
 To set them up, a repository admin:
-1. creates `production` (deployment branches: selected, `main`) and adds `CLOUDFLARE_API_TOKEN` to it;
-2. creates `preview` (deployment branches: all; no required reviewers) and adds `CLOUDFLARE_API_TOKEN` to it;
-3. deletes the repository-level `CLOUDFLARE_API_TOKEN`.
+1. creates `production` (deployment branches: selected, `main`) and adds `SLICCY_AI_DEPLOY_TOKEN` to it;
+2. creates `staging` (deployment branches: all; no required reviewers) and adds `SLICCY_AI_DEPLOY_TOKEN` to it;
+3. keeps the token out of the repository and organization secrets.
 
 ## Rules
 
 The Biome, lefthook, Renovate and CI configuration comes from [slicc-shared-web](https://github.com/ai-ecoverse/slicc-shared-web):
 - no comments;
 - unit tests stay in the gitignored `test/unit/`, and lefthook requires full diff coverage of `src/` from them;
-- integration tests run in CI.
+- integration tests run in CI, through the pipeline above.
