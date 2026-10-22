@@ -148,8 +148,22 @@ function takeOut(version) {
   settle();
 }
 
+function unaccounted(list) {
+  const stable = stableNow(list);
+  if (!stable.tag || settled(list.at(-1), stable)) return '';
+  const current = stableOf(list.at(-1));
+  return `${current} (${tagOf(current) ?? 'no tag'}) is at 100%, not the newest tag ${stable.tag}, and none of the last 10 deployments is a release or a rollback by hand that accounts for it; no traffic changed, and pull request deploys fail until the next release`;
+}
+
+function refuse(reason) {
+  summary(`::error title=Deploy::${reason}`);
+  return 1;
+}
+
 async function branch() {
   await quiet();
+  const before = unaccounted(deployments());
+  if (before) return refuse(before);
   const { entries } = wrangler([
     'versions',
     'upload',
@@ -160,7 +174,10 @@ async function branch() {
   ]);
   const version = output(entries, 'version-upload', 'version_id');
   await quiet();
-  const stable = stableNow(deployments());
+  const list = deployments();
+  const reason = unaccounted(list);
+  if (reason) return refuse(reason);
+  const stable = stableNow(list);
   let status = 1;
   try {
     split([...stable.spec, `${version}@0%`], `${prefix}${label.split(' ').at(-1)}`);

@@ -34,6 +34,7 @@ if (command === 'deployments') {
   const id = 'branch-' + state.versions.length;
   state.versions.push({ id, annotations: { 'workers/tag': flag('--tag') } });
   out({ type: 'version-upload', version_id: id });
+  if (state.uploadInject) state.deployments.push(state.uploadInject);
 } else if (command === 'versions' && sub === 'deploy') {
   const traffic = [];
   for (let i = 2; i < args.length; i += 1) {
@@ -61,7 +62,7 @@ writeFileSync(file, JSON.stringify(state));
 
 let count = 0;
 
-function setup({ tags, versions, inject = [] }) {
+function setup({ tags, versions, inject = [], live = 'release-new' }) {
   count += 1;
   const dir = join(root, String(count));
   const repo = join(dir, 'repo');
@@ -76,7 +77,7 @@ function setup({ tags, versions, inject = [] }) {
   chmodSync(wrangler, 0o755);
   const deployments = Array.from({ length: 10 }, (_, i) => ({
     id: `history-${i}`,
-    versions: [{ version_id: 'release-old', percentage: 100 }],
+    versions: [{ version_id: live, percentage: 100 }],
     annotations: { 'workers/message': `post-deploy tests for ${90 + i}/merge abc${i} done` },
   }));
   const state = join(dir, 'state.json');
@@ -125,10 +126,38 @@ test('the branch version runs next to the newest tag, never next to an older rel
 
 test('a newest tag with no deployable version fails, and no older release is put back', () => {
   const { result, deployments } = run(
-    setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released.slice(0, 1) })
+    setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released.slice(0, 1), live: 'release-old' })
   );
   assert.notEqual(result.status, 0);
   assert.equal(deployments.length, 10);
+});
+
+test('a rollback by hand that left the history fails the deploy and changes no traffic', () => {
+  const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released, live: 'release-old' });
+  const before = JSON.parse(readFileSync(fixture.state, 'utf8'));
+  const { result, deployments, versions } = run(fixture);
+  assert.equal(result.status, 1);
+  assert.deepEqual(deployments, before.deployments);
+  assert.deepEqual(versions, before.versions);
+  assert.match(
+    result.stdout,
+    /::error title=Deploy::release-old \(v1\.9\.0\) is at 100%, not the newest tag v1\.10\.0/
+  );
+});
+
+test('production leaving the newest tag while the branch version uploads fails the deploy before any switch', () => {
+  const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released });
+  const state = JSON.parse(readFileSync(fixture.state, 'utf8'));
+  state.uploadInject = {
+    id: 'rolled-then-evicted',
+    versions: [{ version_id: 'release-old', percentage: 100 }],
+    annotations: { 'workers/message': 'post-deploy tests for 77/merge 0123456789ab done' },
+  };
+  writeFileSync(fixture.state, JSON.stringify(state));
+  const { result, deployments } = run(fixture);
+  assert.equal(result.status, 1);
+  assert.equal(deployments.length, 11);
+  assert.equal(deployments.at(-1).id, 'rolled-then-evicted');
 });
 
 test('a stale branch write that lands after ours is put back to the newest tag, keeping its 0% version', () => {
