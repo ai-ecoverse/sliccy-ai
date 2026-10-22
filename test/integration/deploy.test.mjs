@@ -127,6 +127,10 @@ test('a newest tag with no deployable version fails, and no older release is put
   );
   assert.notEqual(result.status, 0);
   assert.equal(deployments.length, 10);
+  assert.match(
+    result.stdout,
+    /no deployable version has the tag v1\.10\.0.*wrangler versions deploy release-old@100%/
+  );
 });
 
 test('a rollback by hand that left the history fails the deploy and changes no traffic', () => {
@@ -146,19 +150,34 @@ test('a rollback by hand that left the history fails the deploy and changes no t
   );
 });
 
-test('production leaving the newest tag while the branch version uploads fails the deploy before any switch', () => {
+test('a rollback by hand during the upload is the version the branch runs next to and leaves live', () => {
   const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released });
   const state = JSON.parse(readFileSync(fixture.state, 'utf8'));
   state.uploadInject = {
-    id: 'rolled-then-evicted',
+    id: 'rollback',
     versions: [{ version_id: 'release-old', percentage: 100 }],
-    annotations: { 'workers/message': 'post-deploy tests for 77/merge 0123456789ab done' },
+    annotations: { 'workers/message': 'rollback by hand' },
   };
   writeFileSync(fixture.state, JSON.stringify(state));
   const { result, deployments } = run(fixture);
-  assert.equal(result.status, 1);
-  assert.equal(deployments.length, 11);
-  assert.equal(deployments.at(-1).id, 'rolled-then-evicted');
+  assert.equal(result.status, 0, result.stderr);
+  const split = deployments.find((deployment) => deployment.versions.length === 2);
+  assert.equal(split.versions[0].version_id, 'release-old');
+  assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-old', percentage: 100 }]);
+});
+
+test('a rollback by hand that this run evicts from the history stays live', () => {
+  const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released, live: 'release-old' });
+  const state = JSON.parse(readFileSync(fixture.state, 'utf8'));
+  state.deployments[0].annotations['workers/message'] = 'manual rollback';
+  writeFileSync(fixture.state, JSON.stringify(state));
+  const { result, deployments } = run(fixture);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!deployments.slice(-10).some((deployment) => deployment.id === 'history-0'));
+  assert.ok(
+    deployments.slice(10).every((deployment) => deployment.versions[0].version_id === 'release-old')
+  );
+  assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-old', percentage: 100 }]);
 });
 
 test('the newest tag is deployed by its version id, found through the live deployment once the versions list has moved past it', () => {
