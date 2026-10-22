@@ -22,7 +22,7 @@ const [command, sub] = args;
 if (command === 'deployments') {
   process.stdout.write(JSON.stringify(state.deployments.slice(-10)));
 } else if (command === 'versions' && sub === 'view') {
-  process.stdout.write(JSON.stringify(state.versions.find((v) => v.id === args[2])));
+  process.stdout.write(JSON.stringify(state.versions.find((v) => v.id === args[2]) ?? {}));
 } else if (command === 'versions' && sub === 'list') {
   process.stdout.write(JSON.stringify(state.versions.slice(-10)));
 } else if (command === 'deploy') {
@@ -39,11 +39,8 @@ if (command === 'deployments') {
   const traffic = [];
   for (let i = 2; i < args.length; i += 1) {
     if (args[i] === '--version-tag') {
-      const [tag, percentage] = args[i + 1].split('@');
-      const version = state.versions.find((v) => v.annotations['workers/tag'] === tag);
-      if (!version) process.exit(1);
-      traffic.push({ version_id: version.id, percentage: Number.parseInt(percentage, 10) });
-      i += 1;
+      process.stderr.write('No deployable version found with tag ' + args[i + 1] + '\\n');
+      process.exit(1);
     } else if (args[i] === '--message') {
       i += 1;
     } else if (args[i].includes('@')) {
@@ -143,6 +140,10 @@ test('a rollback by hand that left the history fails the deploy and changes no t
     result.stdout,
     /::error title=Deploy::release-old \(v1\.9\.0\) is at 100%, not the newest tag v1\.10\.0/
   );
+  assert.match(
+    result.stdout,
+    /wrangler versions deploy release-old@100% -y --message "hold release-old"/
+  );
 });
 
 test('production leaving the newest tag while the branch version uploads fails the deploy before any switch', () => {
@@ -158,6 +159,20 @@ test('production leaving the newest tag while the branch version uploads fails t
   assert.equal(result.status, 1);
   assert.equal(deployments.length, 11);
   assert.equal(deployments.at(-1).id, 'rolled-then-evicted');
+});
+
+test('the newest tag is deployed by its version id, found through the live deployment once the versions list has moved past it', () => {
+  const uploads = Array.from({ length: 12 }, (_, i) => ({
+    id: `branch-old-${i}`,
+    annotations: { 'workers/tag': `abc${i}` },
+  }));
+  const { result, deployments } = run(
+    setup({ tags: ['v1.9.0', 'v1.10.0'], versions: [...released, ...uploads] })
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const split = deployments.find((deployment) => deployment.versions.length === 2);
+  assert.equal(split.versions[0].version_id, 'release-new');
+  assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-new', percentage: 100 }]);
 });
 
 test('a stale branch write that lands after ours is put back to the newest tag, keeping its 0% version', () => {
@@ -183,7 +198,7 @@ test('a stale branch write that lands after ours is put back to the newest tag, 
   assert.equal(deployments.at(-1).versions[0].version_id, 'release-new');
   assert.match(
     result.stdout,
-    /::warning title=Deploy::late put release-old at 100% instead of v1\.10\.0/
+    /::warning title=Deploy::late put release-old at 100% instead of release-new \(v1\.10\.0\)/
   );
 });
 

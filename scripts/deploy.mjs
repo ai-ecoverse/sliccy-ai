@@ -69,22 +69,37 @@ function newestTag() {
   return tags.at(-1)?.tag;
 }
 
-const tagOf = (version) =>
-  JSON.parse(wrangler(['versions', 'view', version, '--json']).stdout).annotations?.['workers/tag'];
+const tags = new Map();
+
+function tagOf(version) {
+  if (!tags.has(version)) {
+    const view = JSON.parse(wrangler(['versions', 'view', version, '--json']).stdout || '{}');
+    tags.set(version, view?.annotations?.['workers/tag']);
+  }
+  return tags.get(version);
+}
+
+function tagged(tag, list) {
+  const versions = JSON.parse(wrangler(['versions', 'list', '--json']).stdout);
+  const listed = versions.findLast((v) => v.annotations?.['workers/tag'] === tag)?.id;
+  if (listed) return listed;
+  const live = [...new Set(list.flatMap((d) => d.versions.map((v) => v.version_id)))];
+  const found = live.find((version) => tagOf(version) === tag);
+  if (found) return found;
+  throw new Error(`no deployable version has the tag ${tag}; no traffic changed`);
+}
 
 function stableNow(list) {
   const source = authority(list);
   if (source) return { spec: [`${stableOf(source)}@100%`], id: stableOf(source), from: source.id };
   const tag = newestTag();
   if (!tag) return { spec: [`${stableOf(list.at(-1))}@100%`], id: stableOf(list.at(-1)) };
-  return { spec: ['--version-tag', `${tag}@100%`], tag, from: `the git tag ${tag}` };
+  const id = tagged(tag, list);
+  return { spec: [`${id}@100%`], id, tag, from: `the git tag ${tag}` };
 }
 
 function settled(latest, stable) {
-  const current = stableOf(latest);
-  if (stable.id) return current === stable.id;
-  if (!stable.tag) return true;
-  return tagOf(current) === stable.tag;
+  return !stable.id || stableOf(latest) === stable.id;
 }
 
 function settle() {
@@ -98,7 +113,7 @@ function settle() {
     const extra = latest.versions.filter(
       (v) => v.version_id !== current && v.version_id !== stable.id
     );
-    const name = stable.id ?? stable.tag;
+    const name = stable.tag ? `${stable.id} (${stable.tag})` : stable.id;
     console.log(
       `::warning title=Deploy::${latest.id} put ${current} at 100% instead of ${name} from ${stable.from}; putting ${name} back`
     );
@@ -152,7 +167,7 @@ function unaccounted(list) {
   const stable = stableNow(list);
   if (!stable.tag || settled(list.at(-1), stable)) return '';
   const current = stableOf(list.at(-1));
-  return `${current} (${tagOf(current) ?? 'no tag'}) is at 100%, not the newest tag ${stable.tag}, and none of the last 10 deployments is a release or a rollback by hand that accounts for it; no traffic changed, and pull request deploys fail until the next release`;
+  return `${current} (${tagOf(current) ?? 'no tag'}) is at 100%, not the newest tag ${stable.tag}, and none of the last 10 deployments is a release or a rollback by hand that accounts for it; no traffic changed. To unblock pull request deploys, deploy the version that should be live by hand with a message that doesn't start with "${tests}", for example wrangler versions deploy ${current}@100% -y --message "hold ${current}", or roll back again`;
 }
 
 function refuse(reason) {
@@ -182,7 +197,7 @@ async function branch() {
   try {
     split([...stable.spec, `${version}@0%`], `${prefix}${label.split(' ').at(-1)}`);
     settle();
-    status = live({ SLICCY_AI_VERSION: version, SLICCY_AI_STABLE: stable.id ?? stable.tag });
+    status = live({ SLICCY_AI_VERSION: version, SLICCY_AI_STABLE: stable.id });
   } finally {
     takeOut(version);
   }
@@ -234,4 +249,9 @@ if (!mode) {
   console.error('usage: node scripts/deploy.mjs branch|production');
   exit(2);
 }
-exit(await mode());
+try {
+  exit(await mode());
+} catch (error) {
+  summary(`::error title=Deploy::${error.message}`);
+  exit(1);
+}
