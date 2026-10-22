@@ -169,6 +169,8 @@ npm run lint
 
 `npm test` runs the router in workerd through [Miniflare](https://github.com/cloudflare/workers-sdk/tree/main/packages/miniflare) against a local R2 bucket, using `wrangler.json` for the compatibility date and bindings. The ntfy tests run the `NtfyHome` Durable Object and a stand-in `slicc-tray-hub` that exports a `SessionTrayDurableObject`, reached through the same cross-script binding as in production.
 
+`deploy.test.mjs` runs [`scripts/deploy.mjs`](scripts/deploy.mjs) against a stand-in wrangler and a fixture git repository with release tags, so the pull request deploy's choice of the stable version is tested without Cloudflare.
+
 ## CI, releases and deploys
 
 CI is one caller workflow, [`ci.yml`](.github/workflows/ci.yml), that runs [slicc-shared-web's `pipeline.yml`](https://github.com/ai-ecoverse/slicc-shared-web#pipeline) at the same v2 tag as the `@ai-ecoverse/slicc-shared-web` devDependency, with `secrets: inherit`, on pull requests, in the merge queue and on `main`:
@@ -187,7 +189,7 @@ CI is one caller workflow, [`ci.yml`](.github/workflows/ci.yml), that runs [slic
   5. put the version at 100% back alone, even if the tests fail.
 
   Production traffic never reaches the branch's version. The pipeline's deploy job can't share a lock or a concurrency group with the release, so the script keeps one rule instead: the version at 100% is the one at 100% in the newest deployment a branch job didn't write (a release, or a rollback by hand). Every deployment a branch job writes has a message starting `post-deploy tests for `, and:
-  - the stable version is read from that newest other deployment, not from whatever is live;
+  - the stable version is read from that newest other deployment, not from whatever is live. `wrangler deployments list` only returns the last 10, so when every one of those is a branch job's, the stable version is the one wrangler deployed with the newest `v*` git tag of this repository (`--version-tag`), never an older one; if no deployable version has that tag, the job fails without switching anything;
   - after each switch, and after a release's post-deploy tests, if the latest deployment is a branch job's with another version at 100%, that version is put back, keeping any 0% versions, and a `::warning::` names both deployments;
   - a version left at 0% by a cancelled run of the same pull request doesn't hold up the next one, and one left by another pull request is replaced, with a warning, after 10 minutes.
 

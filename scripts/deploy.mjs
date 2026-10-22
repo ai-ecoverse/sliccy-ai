@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { argv, env, exit } from 'node:process';
 import { setTimeout } from 'node:timers/promises';
 
-const bin = new URL('../node_modules/.bin/wrangler', import.meta.url).pathname;
+const bin =
+  env.SLICCY_AI_WRANGLER ?? new URL('../node_modules/.bin/wrangler', import.meta.url).pathname;
+const [liveCommand, ...liveArgs] = (env.SLICCY_AI_LIVE ?? 'npm run test:live').split(' ');
 const token = env.SLICCY_AI_DEPLOY_TOKEN;
 const label = `${env.GITHUB_REF_NAME ?? 'local'} ${env.GITHUB_SHA?.slice(0, 12) ?? ''}`.trim();
 
@@ -54,28 +56,55 @@ function split(versions, note) {
   return output(entries, 'version-deploy', 'deployment_id');
 }
 
+function newestTag() {
+  const remote = env.SLICCY_AI_GIT_REMOTE ?? 'origin';
+  const refs = execFileSync('git', ['ls-remote', '--tags', remote, 'v*'], { encoding: 'utf8' });
+  const tags = [...refs.matchAll(/refs\/tags\/(v(\d+)\.(\d+)\.(\d+))$/gm)].map((m) => ({
+    tag: m[1],
+    parts: m.slice(2, 5).map(Number),
+  }));
+  tags.sort(
+    (x, y) => x.parts[0] - y.parts[0] || x.parts[1] - y.parts[1] || x.parts[2] - y.parts[2]
+  );
+  return tags.at(-1)?.tag;
+}
+
+const tagOf = (version) =>
+  JSON.parse(wrangler(['versions', 'view', version, '--json']).stdout).annotations?.['workers/tag'];
+
 function stableNow(list) {
-  return stableOf(authority(list) ?? list.at(-1));
+  const source = authority(list);
+  if (source) return { spec: [`${stableOf(source)}@100%`], id: stableOf(source), from: source.id };
+  const tag = newestTag();
+  if (!tag) return { spec: [`${stableOf(list.at(-1))}@100%`], id: stableOf(list.at(-1)) };
+  return { spec: ['--version-tag', `${tag}@100%`], tag, from: `the git tag ${tag}` };
+}
+
+function settled(latest, stable) {
+  const current = stableOf(latest);
+  if (stable.id) return current === stable.id;
+  if (!stable.tag) return true;
+  return tagOf(current) === stable.tag;
 }
 
 function settle() {
   for (let round = 0; round < 5; round += 1) {
     const list = deployments();
     const latest = list.at(-1);
-    const source = authority(list);
-    if (!source || !branchWrite(latest)) return;
-    const stable = stableOf(source);
+    if (!branchWrite(latest)) return;
+    const stable = stableNow(list);
+    if (!stable.from || settled(latest, stable)) return;
     const current = stableOf(latest);
-    if (current === stable) return;
     const extra = latest.versions.filter(
-      (v) => v.version_id !== current && v.version_id !== stable
+      (v) => v.version_id !== current && v.version_id !== stable.id
     );
+    const name = stable.id ?? stable.tag;
     console.log(
-      `::warning title=Deploy::${latest.id} put ${current} at 100% instead of ${stable} from ${source.id}; putting ${stable} back`
+      `::warning title=Deploy::${latest.id} put ${current} at 100% instead of ${name} from ${stable.from}; putting ${name} back`
     );
     split(
-      [`${stable}@100%`, ...extra.map((v) => `${v.version_id}@0%`)],
-      `${tests}${label}: ${stable} back from ${source.id}`
+      [...stable.spec, ...extra.map((v) => `${v.version_id}@0%`)],
+      `${tests}${label}: ${name} back from ${stable.from}`
     );
   }
   throw new Error(`the deployment kept changing while ${label} put the stable version back`);
@@ -100,7 +129,7 @@ function live(vars) {
   delete clean.SLICCY_AI_DEPLOY_TOKEN;
   delete clean.CLOUDFLARE_API_TOKEN;
   summary(`Testing sliccy-ai version ${vars.SLICCY_AI_VERSION}`);
-  return spawnSync('npm', ['run', 'test:live'], { stdio: 'inherit', env: clean }).status ?? 1;
+  return spawnSync(liveCommand, liveArgs, { stdio: 'inherit', env: clean }).status ?? 1;
 }
 
 function takeOut(version) {
@@ -108,8 +137,8 @@ function takeOut(version) {
   const latest = list.at(-1);
   if (latest.versions.some((v) => v.version_id === version)) {
     const stable = stableNow(list);
-    if (stable === version) throw new Error(`${version} is the stable version; left as it is`);
-    split([`${stable}@100%`], `${prefix}${label.split(' ').at(-1)} done`);
+    if (stable.id === version) throw new Error(`${version} is the stable version; left as it is`);
+    split(stable.spec, `${prefix}${label.split(' ').at(-1)} done`);
     summary(`Took ${version} back out of the deployment`);
   }
   settle();
@@ -130,9 +159,9 @@ async function branch() {
   const stable = stableNow(deployments());
   let status = 1;
   try {
-    split([`${stable}@100%`, `${version}@0%`], `${prefix}${label.split(' ').at(-1)}`);
+    split([...stable.spec, `${version}@0%`], `${prefix}${label.split(' ').at(-1)}`);
     settle();
-    status = live({ SLICCY_AI_VERSION: version, SLICCY_AI_STABLE: stable });
+    status = live({ SLICCY_AI_VERSION: version, SLICCY_AI_STABLE: stable.id ?? stable.tag });
   } finally {
     takeOut(version);
   }
