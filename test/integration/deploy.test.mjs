@@ -22,7 +22,7 @@ const [command, sub] = args;
 if (command === 'deployments') {
   process.stdout.write(JSON.stringify(state.deployments.slice(-10)));
 } else if (command === 'versions' && sub === 'view') {
-  process.stdout.write(JSON.stringify(state.versions.find((v) => v.id === args[2])));
+  process.stdout.write(JSON.stringify(state.versions.find((v) => v.id === args[2]) ?? {}));
 } else if (command === 'versions' && sub === 'list') {
   process.stdout.write(JSON.stringify(state.versions.slice(-10)));
 } else if (command === 'deploy') {
@@ -34,15 +34,13 @@ if (command === 'deployments') {
   const id = 'branch-' + state.versions.length;
   state.versions.push({ id, annotations: { 'workers/tag': flag('--tag') } });
   out({ type: 'version-upload', version_id: id });
+  if (state.uploadInject) state.deployments.push(state.uploadInject);
 } else if (command === 'versions' && sub === 'deploy') {
   const traffic = [];
   for (let i = 2; i < args.length; i += 1) {
     if (args[i] === '--version-tag') {
-      const [tag, percentage] = args[i + 1].split('@');
-      const version = state.versions.find((v) => v.annotations['workers/tag'] === tag);
-      if (!version) process.exit(1);
-      traffic.push({ version_id: version.id, percentage: Number.parseInt(percentage, 10) });
-      i += 1;
+      process.stderr.write('No deployable version found with tag ' + args[i + 1] + '\\n');
+      process.exit(1);
     } else if (args[i] === '--message') {
       i += 1;
     } else if (args[i].includes('@')) {
@@ -59,9 +57,16 @@ if (command === 'deployments') {
 writeFileSync(file, JSON.stringify(state));
 `;
 
+const liveWrites = `import { readFileSync, writeFileSync } from 'node:fs';
+const file = process.env.FAKE_STATE;
+const state = JSON.parse(readFileSync(file, 'utf8'));
+state.deployments.push(...JSON.parse(process.env.FAKE_LIVE_WRITES ?? '[]'));
+writeFileSync(file, JSON.stringify(state));
+`;
+
 let count = 0;
 
-function setup({ tags, versions, inject = [] }) {
+function setup({ tags, versions, inject = [], live = 'release-new' }) {
   count += 1;
   const dir = join(root, String(count));
   const repo = join(dir, 'repo');
@@ -72,19 +77,20 @@ function setup({ tags, versions, inject = [] }) {
   commit(repo, 'fixture');
   for (const tag of tags) execFileSync('git', ['tag', tag], { cwd: repo });
   const wrangler = join(dir, 'wrangler.mjs');
+  writeFileSync(join(dir, 'live.mjs'), liveWrites);
   writeFileSync(wrangler, fake);
   chmodSync(wrangler, 0o755);
   const deployments = Array.from({ length: 10 }, (_, i) => ({
     id: `history-${i}`,
-    versions: [{ version_id: 'release-old', percentage: 100 }],
+    versions: [{ version_id: live, percentage: 100 }],
     annotations: { 'workers/message': `post-deploy tests for ${90 + i}/merge abc${i} done` },
   }));
   const state = join(dir, 'state.json');
   writeFileSync(state, JSON.stringify({ deployments, versions, inject }));
-  return { repo, wrangler, state };
+  return { repo, wrangler, state, dir };
 }
 
-function run({ repo, wrangler, state }, { mode = 'branch', ...extra } = {}) {
+function run({ repo, wrangler, state, dir }, { mode = 'branch', ...extra } = {}) {
   const { GITHUB_STEP_SUMMARY: _summary, GITHUB_EVENT_PATH: _event, ...rest } = env;
   const result = spawnSync('node', [script, mode], {
     encoding: 'utf8',
@@ -93,7 +99,7 @@ function run({ repo, wrangler, state }, { mode = 'branch', ...extra } = {}) {
       FAKE_STATE: state,
       SLICCY_AI_DEPLOY_TOKEN: 'fake',
       SLICCY_AI_WRANGLER: wrangler,
-      SLICCY_AI_LIVE: 'node -e 0',
+      SLICCY_AI_LIVE: `node ${join(dir, 'live.mjs')}`,
       SLICCY_AI_GIT_REMOTE: repo,
       GITHUB_REF_NAME: '76/merge',
       GITHUB_REPOSITORY: 'ai-ecoverse/sliccy-ai',
@@ -125,10 +131,112 @@ test('the branch version runs next to the newest tag, never next to an older rel
 
 test('a newest tag with no deployable version fails, and no older release is put back', () => {
   const { result, deployments } = run(
-    setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released.slice(0, 1) })
+    setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released.slice(0, 1), live: 'release-old' })
   );
   assert.notEqual(result.status, 0);
   assert.equal(deployments.length, 10);
+  assert.match(
+    result.stdout,
+    /no deployable version has the tag v1\.10\.0.*wrangler versions deploy release-old@100%/
+  );
+});
+
+test('a rollback by hand that left the history fails the deploy and changes no traffic', () => {
+  const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released, live: 'release-old' });
+  const before = JSON.parse(readFileSync(fixture.state, 'utf8'));
+  const { result, deployments, versions } = run(fixture);
+  assert.equal(result.status, 1);
+  assert.deepEqual(deployments, before.deployments);
+  assert.deepEqual(versions, before.versions);
+  assert.match(
+    result.stdout,
+    /::error title=Deploy::release-old \(v1\.9\.0\) is at 100%, not the newest tag v1\.10\.0/
+  );
+  assert.match(
+    result.stdout,
+    /wrangler versions deploy release-old@100% -y --message "hold release-old"/
+  );
+});
+
+test('a rollback by hand during the upload is the version the branch runs next to and leaves live', () => {
+  const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released });
+  const state = JSON.parse(readFileSync(fixture.state, 'utf8'));
+  state.uploadInject = {
+    id: 'rollback',
+    versions: [{ version_id: 'release-old', percentage: 100 }],
+    annotations: { 'workers/message': 'rollback by hand' },
+  };
+  writeFileSync(fixture.state, JSON.stringify(state));
+  const { result, deployments } = run(fixture);
+  assert.equal(result.status, 0, result.stderr);
+  const split = deployments.find((deployment) => deployment.versions.length === 2);
+  assert.equal(split.versions[0].version_id, 'release-old');
+  assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-old', percentage: 100 }]);
+});
+
+test('a rollback by hand that this run evicts from the history stays live', () => {
+  const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released, live: 'release-old' });
+  const state = JSON.parse(readFileSync(fixture.state, 'utf8'));
+  state.deployments[0].annotations['workers/message'] = 'manual rollback';
+  writeFileSync(fixture.state, JSON.stringify(state));
+  const { result, deployments } = run(fixture);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!deployments.slice(-10).some((deployment) => deployment.id === 'history-0'));
+  assert.ok(
+    deployments.slice(10).every((deployment) => deployment.versions[0].version_id === 'release-old')
+  );
+  assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-old', percentage: 100 }]);
+});
+
+const staleWrites = (version) =>
+  JSON.stringify(
+    Array.from({ length: 10 }, (_, i) => ({
+      id: `stale-${i}`,
+      versions: [{ version_id: version, percentage: 100 }],
+      annotations: { 'workers/message': `post-deploy tests for 77/merge abc${i} done` },
+    }))
+  );
+
+test('a release that lands after the split stays live once branch writes push it out of the history', () => {
+  const release = {
+    id: 'release-mid-run',
+    versions: [{ version_id: 'release-newer', percentage: 100 }],
+    annotations: { 'workers/message': 'release v1.11.0' },
+  };
+  const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released, inject: [release] });
+  const { result, deployments } = run(fixture, { FAKE_LIVE_WRITES: staleWrites('release-new') });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!deployments.slice(-10).some((deployment) => deployment.id === 'release-mid-run'));
+  assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-newer', percentage: 100 }]);
+});
+
+test('a rollback by hand during the upload stays live once branch writes push it out of the history', () => {
+  const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released });
+  const state = JSON.parse(readFileSync(fixture.state, 'utf8'));
+  state.uploadInject = {
+    id: 'rollback',
+    versions: [{ version_id: 'release-old', percentage: 100 }],
+    annotations: { 'workers/message': 'rollback by hand' },
+  };
+  writeFileSync(fixture.state, JSON.stringify(state));
+  const { result, deployments } = run(fixture, { FAKE_LIVE_WRITES: staleWrites('release-new') });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!deployments.slice(-10).some((deployment) => deployment.id === 'rollback'));
+  assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-old', percentage: 100 }]);
+});
+
+test('the newest tag is deployed by its version id, found through the live deployment once the versions list has moved past it', () => {
+  const uploads = Array.from({ length: 12 }, (_, i) => ({
+    id: `branch-old-${i}`,
+    annotations: { 'workers/tag': `abc${i}` },
+  }));
+  const { result, deployments } = run(
+    setup({ tags: ['v1.9.0', 'v1.10.0'], versions: [...released, ...uploads] })
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const split = deployments.find((deployment) => deployment.versions.length === 2);
+  assert.equal(split.versions[0].version_id, 'release-new');
+  assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-new', percentage: 100 }]);
 });
 
 test('a stale branch write that lands after ours is put back to the newest tag, keeping its 0% version', () => {
@@ -154,7 +262,7 @@ test('a stale branch write that lands after ours is put back to the newest tag, 
   assert.equal(deployments.at(-1).versions[0].version_id, 'release-new');
   assert.match(
     result.stdout,
-    /::warning title=Deploy::late put release-old at 100% instead of v1\.10\.0/
+    /::warning title=Deploy::late put release-old at 100% instead of release-new \(v1\.10\.0\)/
   );
 });
 

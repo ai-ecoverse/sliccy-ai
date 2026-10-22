@@ -69,41 +69,73 @@ function newestTag() {
   return tags.at(-1)?.tag;
 }
 
-const tagOf = (version) =>
-  JSON.parse(wrangler(['versions', 'view', version, '--json']).stdout).annotations?.['workers/tag'];
+const tags = new Map();
 
-function stableNow(list) {
+function tagOf(version) {
+  if (!tags.has(version)) {
+    const view = JSON.parse(wrangler(['versions', 'view', version, '--json']).stdout || '{}');
+    tags.set(version, view?.annotations?.['workers/tag']);
+  }
+  return tags.get(version);
+}
+
+const unblock = (current) =>
+  `To unblock pull request deploys, deploy the version that should be live by hand with a message that doesn't start with "${tests}", for example wrangler versions deploy ${current}@100% -y --message "hold ${current}", or roll back again`;
+
+function tagged(tag, list) {
+  const versions = JSON.parse(wrangler(['versions', 'list', '--json']).stdout);
+  const listed = versions.findLast((v) => v.annotations?.['workers/tag'] === tag)?.id;
+  if (listed) return listed;
+  const live = [...new Set(list.flatMap((d) => d.versions.map((v) => v.version_id)))];
+  const found = live.find((version) => tagOf(version) === tag);
+  if (found) return found;
+  throw new Error(
+    `no deployable version has the tag ${tag}; no traffic changed. ${unblock(stableOf(list.at(-1)))}`
+  );
+}
+
+function decide(list) {
+  const seen = new Set(list.map((deployment) => deployment.id));
   const source = authority(list);
-  if (source) return { spec: [`${stableOf(source)}@100%`], id: stableOf(source), from: source.id };
+  if (source) return { id: stableOf(source), from: source.id, seen };
+  const current = stableOf(list.at(-1));
   const tag = newestTag();
-  if (!tag) return { spec: [`${stableOf(list.at(-1))}@100%`], id: stableOf(list.at(-1)) };
-  return { spec: ['--version-tag', `${tag}@100%`], tag, from: `the git tag ${tag}` };
+  if (!tag) return { id: current, from: `${list.at(-1).id}, live before any write`, seen };
+  const id = tagged(tag, list);
+  if (id !== current) {
+    throw new Error(
+      `${current} (${tagOf(current) ?? 'no tag'}) is at 100%, not the newest tag ${tag}, and none of the last 10 deployments is a release or a rollback by hand that accounts for it; no traffic changed. ${unblock(current)}`
+    );
+  }
+  return { id, tag, from: `the git tag ${tag}`, seen };
 }
 
-function settled(latest, stable) {
-  const current = stableOf(latest);
-  if (stable.id) return current === stable.id;
-  if (!stable.tag) return true;
-  return tagOf(current) === stable.tag;
+function target(plan, list) {
+  const newer = list.findLast((d) => !branchWrite(d) && !plan.seen.has(d.id));
+  if (newer) {
+    for (const deployment of list) plan.seen.add(deployment.id);
+    Object.assign(plan, { id: stableOf(newer), from: newer.id, tag: undefined });
+  }
+  return plan;
 }
 
-function settle() {
+function settle(plan) {
   for (let round = 0; round < 5; round += 1) {
     const list = deployments();
     const latest = list.at(-1);
+    const stable = target(plan, list);
     if (!branchWrite(latest)) return;
-    const stable = stableNow(list);
-    if (!stable.from || settled(latest, stable)) return;
     const current = stableOf(latest);
+    if (current === stable.id) return;
     const extra = latest.versions.filter(
       (v) => v.version_id !== current && v.version_id !== stable.id
     );
-    const name = stable.id ?? stable.tag;
+    const name = stable.tag ? `${stable.id} (${stable.tag})` : stable.id;
     console.log(
       `::warning title=Deploy::${latest.id} put ${current} at 100% instead of ${name} from ${stable.from}; putting ${name} back`
     );
     split(
-      [...stable.spec, ...extra.map((v) => `${v.version_id}@0%`)],
+      [`${stable.id}@100%`, ...extra.map((v) => `${v.version_id}@0%`)],
       `${tests}put-back by ${label}: ${name} from ${stable.from}`
     );
   }
@@ -136,20 +168,20 @@ function live(vars) {
   return spawnSync(liveCommand, liveArgs, { stdio: 'inherit', env: clean }).status ?? 1;
 }
 
-function takeOut(version) {
+function takeOut(version, plan) {
   const list = deployments();
-  const latest = list.at(-1);
-  if (latest.versions.some((v) => v.version_id === version)) {
-    const stable = stableNow(list);
+  if (list.at(-1).versions.some((v) => v.version_id === version)) {
+    const stable = target(plan, list);
     if (stable.id === version) throw new Error(`${version} is the stable version; left as it is`);
-    split(stable.spec, `${prefix}${label.split(' ').at(-1)} done`);
+    split([`${stable.id}@100%`], `${prefix}${label.split(' ').at(-1)} done`);
     summary(`Took ${version} back out of the deployment`);
   }
-  settle();
+  settle(plan);
 }
 
 async function branch() {
   await quiet();
+  const plan = decide(deployments());
   const { entries } = wrangler([
     'versions',
     'upload',
@@ -160,14 +192,14 @@ async function branch() {
   ]);
   const version = output(entries, 'version-upload', 'version_id');
   await quiet();
-  const stable = stableNow(deployments());
   let status = 1;
   try {
-    split([...stable.spec, `${version}@0%`], `${prefix}${label.split(' ').at(-1)}`);
-    settle();
-    status = live({ SLICCY_AI_VERSION: version, SLICCY_AI_STABLE: stable.id ?? stable.tag });
+    const stable = target(plan, deployments());
+    split([`${stable.id}@100%`, `${version}@0%`], `${prefix}${label.split(' ').at(-1)}`);
+    settle(plan);
+    status = live({ SLICCY_AI_VERSION: version, SLICCY_AI_STABLE: stable.id });
   } finally {
-    takeOut(version);
+    takeOut(version, plan);
   }
   return status;
 }
@@ -185,10 +217,11 @@ function production() {
       'version_id'
     );
   summary(`Deployed ${release} as sliccy-ai version ${version}`);
+  const seen = new Set(deployments().map((deployment) => deployment.id));
   try {
     return live({ SLICCY_AI_VERSION: version });
   } finally {
-    settle();
+    settle({ id: version, from: `release ${release}`, seen });
   }
 }
 
@@ -217,4 +250,9 @@ if (!mode) {
   console.error('usage: node scripts/deploy.mjs branch|production');
   exit(2);
 }
-exit(await mode());
+try {
+  exit(await mode());
+} catch (error) {
+  summary(`::error title=Deploy::${error.message}`);
+  exit(1);
+}
