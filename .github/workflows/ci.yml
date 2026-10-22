@@ -2,18 +2,36 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
+  issues: write
+  pull-requests: write
+  statuses: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ci:
-    uses: ai-ecoverse/slicc-shared-web/.github/workflows/node-ci.yml@v1.30.8
+    uses: ai-ecoverse/slicc-shared-web/.github/workflows/pipeline.yml@v2.8.3
+    secrets: inherit
     with:
-      chromium: false
+      test-glob: test/integration/*.test.mjs
+      deploy-secrets: SLICCY_AI_DEPLOY_TOKEN
+      deploy: |
+        if [ "$(id -u)" = 0 ] || sudo -n true 2>/dev/null; then deps=--with-deps; fi
+        npx --no-install playwright-core install ${deps:-} chromium
+        node scripts/deploy.mjs branch
+      release-environment: production
+      release-secrets: SLICCY_AI_DEPLOY_TOKEN
+      after-release: |
+        npx --no-install playwright-core install --with-deps chromium
+        node scripts/deploy.mjs production
