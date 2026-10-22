@@ -217,7 +217,11 @@ function production() {
       'version_id'
     );
   summary(`Deployed ${release} as sliccy-ai version ${version}`);
-  const seen = new Set(deployments().map((deployment) => deployment.id));
+  const list = deployments();
+  const own = list.findLastIndex(
+    (deployment) => message(deployment) === `release ${release}` && stableOf(deployment) === version
+  );
+  const seen = new Set(list.slice(0, own < 0 ? list.length : own + 1).map(({ id }) => id));
   try {
     return live({ SLICCY_AI_VERSION: version });
   } finally {
