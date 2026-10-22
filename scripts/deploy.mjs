@@ -112,15 +112,19 @@ function decide(list) {
 
 function target(plan, list) {
   const newer = list.findLast((d) => !branchWrite(d) && !plan.seen.has(d.id));
-  return newer ? { id: stableOf(newer), from: newer.id } : plan;
+  if (newer) {
+    for (const deployment of list) plan.seen.add(deployment.id);
+    Object.assign(plan, { id: stableOf(newer), from: newer.id, tag: undefined });
+  }
+  return plan;
 }
 
 function settle(plan) {
   for (let round = 0; round < 5; round += 1) {
     const list = deployments();
     const latest = list.at(-1);
-    if (!branchWrite(latest)) return;
     const stable = target(plan, list);
+    if (!branchWrite(latest)) return;
     const current = stableOf(latest);
     if (current === stable.id) return;
     const extra = latest.versions.filter(

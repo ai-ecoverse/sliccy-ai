@@ -57,6 +57,13 @@ if (command === 'deployments') {
 writeFileSync(file, JSON.stringify(state));
 `;
 
+const liveWrites = `import { readFileSync, writeFileSync } from 'node:fs';
+const file = process.env.FAKE_STATE;
+const state = JSON.parse(readFileSync(file, 'utf8'));
+state.deployments.push(...JSON.parse(process.env.FAKE_LIVE_WRITES ?? '[]'));
+writeFileSync(file, JSON.stringify(state));
+`;
+
 let count = 0;
 
 function setup({ tags, versions, inject = [], live = 'release-new' }) {
@@ -70,6 +77,7 @@ function setup({ tags, versions, inject = [], live = 'release-new' }) {
   commit(repo, 'fixture');
   for (const tag of tags) execFileSync('git', ['tag', tag], { cwd: repo });
   const wrangler = join(dir, 'wrangler.mjs');
+  writeFileSync(join(dir, 'live.mjs'), liveWrites);
   writeFileSync(wrangler, fake);
   chmodSync(wrangler, 0o755);
   const deployments = Array.from({ length: 10 }, (_, i) => ({
@@ -79,10 +87,10 @@ function setup({ tags, versions, inject = [], live = 'release-new' }) {
   }));
   const state = join(dir, 'state.json');
   writeFileSync(state, JSON.stringify({ deployments, versions, inject }));
-  return { repo, wrangler, state };
+  return { repo, wrangler, state, dir };
 }
 
-function run({ repo, wrangler, state }, { mode = 'branch', ...extra } = {}) {
+function run({ repo, wrangler, state, dir }, { mode = 'branch', ...extra } = {}) {
   const { GITHUB_STEP_SUMMARY: _summary, GITHUB_EVENT_PATH: _event, ...rest } = env;
   const result = spawnSync('node', [script, mode], {
     encoding: 'utf8',
@@ -91,7 +99,7 @@ function run({ repo, wrangler, state }, { mode = 'branch', ...extra } = {}) {
       FAKE_STATE: state,
       SLICCY_AI_DEPLOY_TOKEN: 'fake',
       SLICCY_AI_WRANGLER: wrangler,
-      SLICCY_AI_LIVE: 'node -e 0',
+      SLICCY_AI_LIVE: `node ${join(dir, 'live.mjs')}`,
       SLICCY_AI_GIT_REMOTE: repo,
       GITHUB_REF_NAME: '76/merge',
       GITHUB_REPOSITORY: 'ai-ecoverse/sliccy-ai',
@@ -177,6 +185,43 @@ test('a rollback by hand that this run evicts from the history stays live', () =
   assert.ok(
     deployments.slice(10).every((deployment) => deployment.versions[0].version_id === 'release-old')
   );
+  assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-old', percentage: 100 }]);
+});
+
+const staleWrites = (version) =>
+  JSON.stringify(
+    Array.from({ length: 10 }, (_, i) => ({
+      id: `stale-${i}`,
+      versions: [{ version_id: version, percentage: 100 }],
+      annotations: { 'workers/message': `post-deploy tests for 77/merge abc${i} done` },
+    }))
+  );
+
+test('a release that lands after the split stays live once branch writes push it out of the history', () => {
+  const release = {
+    id: 'release-mid-run',
+    versions: [{ version_id: 'release-newer', percentage: 100 }],
+    annotations: { 'workers/message': 'release v1.11.0' },
+  };
+  const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released, inject: [release] });
+  const { result, deployments } = run(fixture, { FAKE_LIVE_WRITES: staleWrites('release-new') });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!deployments.slice(-10).some((deployment) => deployment.id === 'release-mid-run'));
+  assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-newer', percentage: 100 }]);
+});
+
+test('a rollback by hand during the upload stays live once branch writes push it out of the history', () => {
+  const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released });
+  const state = JSON.parse(readFileSync(fixture.state, 'utf8'));
+  state.uploadInject = {
+    id: 'rollback',
+    versions: [{ version_id: 'release-old', percentage: 100 }],
+    annotations: { 'workers/message': 'rollback by hand' },
+  };
+  writeFileSync(fixture.state, JSON.stringify(state));
+  const { result, deployments } = run(fixture, { FAKE_LIVE_WRITES: staleWrites('release-new') });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!deployments.slice(-10).some((deployment) => deployment.id === 'rollback'));
   assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-old', percentage: 100 }]);
 });
 
