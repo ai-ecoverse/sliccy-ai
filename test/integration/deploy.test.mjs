@@ -23,6 +23,13 @@ if (command === 'deployments') {
   process.stdout.write(JSON.stringify(state.deployments.slice(-10)));
 } else if (command === 'versions' && sub === 'view') {
   process.stdout.write(JSON.stringify(state.versions.find((v) => v.id === args[2])));
+} else if (command === 'versions' && sub === 'list') {
+  process.stdout.write(JSON.stringify(state.versions.slice(-10)));
+} else if (command === 'deploy') {
+  const id = 'deployed-' + state.versions.length;
+  state.versions.push({ id, annotations: { 'workers/tag': flag('--tag') } });
+  state.deployments.push({ id: 'deployment-' + state.deployments.length, versions: [{ version_id: id, percentage: 100 }], annotations: { 'workers/message': flag('--message') } });
+  out({ type: 'deploy', version_id: id });
 } else if (command === 'versions' && sub === 'upload') {
   const id = 'branch-' + state.versions.length;
   state.versions.push({ id, annotations: { 'workers/tag': flag('--tag') } });
@@ -77,9 +84,9 @@ function setup({ tags, versions, inject = [] }) {
   return { repo, wrangler, state };
 }
 
-function run({ repo, wrangler, state }) {
-  const { GITHUB_STEP_SUMMARY: _summary, ...rest } = env;
-  const result = spawnSync('node', [script, 'branch'], {
+function run({ repo, wrangler, state }, { mode = 'branch', ...extra } = {}) {
+  const { GITHUB_STEP_SUMMARY: _summary, GITHUB_EVENT_PATH: _event, ...rest } = env;
+  const result = spawnSync('node', [script, mode], {
     encoding: 'utf8',
     env: {
       ...rest,
@@ -89,11 +96,13 @@ function run({ repo, wrangler, state }) {
       SLICCY_AI_LIVE: 'node -e 0',
       SLICCY_AI_GIT_REMOTE: repo,
       GITHUB_REF_NAME: '76/merge',
+      GITHUB_REPOSITORY: 'ai-ecoverse/sliccy-ai',
       GITHUB_SHA: 'feedfacecafebeef',
+      ...extra,
     },
   });
-  const { deployments } = JSON.parse(readFileSync(state, 'utf8'));
-  return { result, latest: deployments.at(-1), deployments };
+  const { deployments, versions } = JSON.parse(readFileSync(state, 'utf8'));
+  return { result, latest: deployments.at(-1), deployments, versions };
 }
 
 const released = [
@@ -147,4 +156,59 @@ test('a stale branch write that lands after ours is put back to the newest tag, 
     result.stdout,
     /::warning title=Deploy::late put release-old at 100% instead of v1\.10\.0/
   );
+});
+
+test('a version stuck at 0% by another pull request is waited on once, then replaced', () => {
+  const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released });
+  const state = JSON.parse(readFileSync(fixture.state, 'utf8'));
+  state.deployments.push({
+    id: 'stuck',
+    versions: [
+      { version_id: 'release-new', percentage: 100 },
+      { version_id: 'other-pr', percentage: 0 },
+    ],
+    annotations: { 'workers/message': 'post-deploy tests for 77/merge 0123456789ab' },
+  });
+  writeFileSync(fixture.state, JSON.stringify(state));
+  const { result, latest } = run(fixture, { SLICCY_AI_WAIT_MS: '0' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.match(/replacing it/g)?.length, 1);
+  assert.deepEqual(latest.versions, [{ version_id: 'release-new', percentage: 100 }]);
+});
+
+test('a pull request from a fork skips the deploy, and one from this repository without the token fails', () => {
+  const fixture = setup({ tags: ['v1.10.0'], versions: released });
+  const event = join(root, `event-${count}.json`);
+  const from = (name) => {
+    writeFileSync(event, JSON.stringify({ pull_request: { head: { repo: { full_name: name } } } }));
+    return run(fixture, { SLICCY_AI_DEPLOY_TOKEN: '', GITHUB_EVENT_PATH: event });
+  };
+  const forked = from('someone/sliccy-ai');
+  assert.equal(forked.result.status, 0, forked.result.stderr);
+  assert.match(forked.result.stdout, /fork gets no deploy token/);
+  assert.equal(forked.deployments.length, 10);
+  assert.equal(from('ai-ecoverse/sliccy-ai').result.status, 1);
+});
+
+test('a re-run release deploys the version it already uploaded, so its tag stays unique', () => {
+  const { result, latest, versions } = run(setup({ tags: ['v1.10.0'], versions: released }), {
+    mode: 'production',
+    RELEASE_VERSION: '1.10.0',
+    GITHUB_REF_NAME: 'main',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(versions.filter((v) => v.annotations['workers/tag'] === 'v1.10.0').length, 1);
+  assert.deepEqual(latest.versions, [{ version_id: 'release-new', percentage: 100 }]);
+  assert.equal(latest.annotations['workers/message'], 'release v1.10.0');
+});
+
+test('a first release deploys a new version tagged with it', () => {
+  const { result, latest, versions } = run(setup({ tags: ['v1.10.0'], versions: released }), {
+    mode: 'production',
+    RELEASE_VERSION: '1.11.0',
+    GITHUB_REF_NAME: 'main',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(versions.at(-1).annotations['workers/tag'], 'v1.11.0');
+  assert.equal(latest.versions[0].version_id, versions.at(-1).id);
 });

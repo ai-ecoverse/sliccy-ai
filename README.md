@@ -180,7 +180,7 @@ CI is one caller workflow, [`ci.yml`](.github/workflows/ci.yml), that runs [slic
 - **`main`:** semantic-release, in the `production` environment. It tags `vX.Y.Z` and writes a GitHub release from the conventional commits; nothing goes to npm (`release.config.mjs` has no npm plugin). `fix:` and `feat:` release; `chore:`, `ci:`, `docs:` and `test:` don't, so a Renovate `chore(deps)` merge deploys nothing until the next release.
 
 [`scripts/deploy.mjs`](scripts/deploy.mjs) does both deploys:
-- **A release (`after-release`):** `wrangler deploy`, tagged with the release, then the post-deploy tests against the version it just deployed. A push to `main` that releases nothing deploys nothing.
+- **A release (`after-release`):** `wrangler deploy`, tagged with the release, then the post-deploy tests against the version it just deployed. A re-run of the release job deploys the version that release already uploaded, so each tag names one version. A push to `main` that releases nothing deploys nothing.
 - **A pull request (`deploy`):**
   1. wait while another branch's version is in the deployment (up to 10 minutes);
   2. `wrangler versions upload`;
@@ -191,7 +191,8 @@ CI is one caller workflow, [`ci.yml`](.github/workflows/ci.yml), that runs [slic
   Production traffic never reaches the branch's version. The pipeline's deploy job can't share a lock or a concurrency group with the release, so the script keeps one rule instead: the version at 100% is the one at 100% in the newest deployment a branch job didn't write (a release, or a rollback by hand). Every deployment a branch job writes has a message starting `post-deploy tests for `, and:
   - the stable version is read from that newest other deployment, not from whatever is live. `wrangler deployments list` only returns the last 10, so when every one of those is a branch job's, the stable version is the one wrangler deployed with the newest `v*` git tag of this repository (`--version-tag`), never an older one; if no deployable version has that tag, the job fails without switching anything;
   - after each switch, and after a release's post-deploy tests, if the latest deployment is a branch job's with another version at 100%, that version is put back, keeping any 0% versions, and a `::warning::` names both deployments;
-  - a version left at 0% by a cancelled run of the same pull request doesn't hold up the next one, and one left by another pull request is replaced, with a warning, after 10 minutes.
+  - a version left at 0% by a cancelled run of the same pull request doesn't hold up the next one, and one left by another pull request is replaced, with a warning, after 10 minutes in all;
+  - a pull request from a fork gets no token, so it skips the deploy with a notice; one from this repository without the token fails.
 
 The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`npm run test:live`) send `Cloudflare-Workers-Version-Overrides: sliccy-ai="<version>"` on every request to `*.sliccy.ai`, so they reach the version under test, and they wait until `x-sliccy-ai-version` names it. They check:
 - serving `seven`;

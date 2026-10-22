@@ -104,20 +104,24 @@ function settle() {
     );
     split(
       [...stable.spec, ...extra.map((v) => `${v.version_id}@0%`)],
-      `${tests}${label}: ${name} back from ${stable.from}`
+      `${tests}put-back by ${label}: ${name} from ${stable.from}`
     );
   }
   throw new Error(`the deployment kept changing while ${label} put the stable version back`);
 }
 
+const wait = { until: Date.now() + Number(env.SLICCY_AI_WAIT_MS ?? 600000), warned: false };
+
 async function quiet() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  while (Date.now() < wait.until) {
     const latest = deployments().at(-1);
     if (latest.versions.length === 1 || message(latest).startsWith(prefix)) return;
     console.log(`another version is under test in ${latest.id}, waiting`);
-    await setTimeout(15000);
+    await setTimeout(Math.min(15000, Math.max(0, wait.until - Date.now())));
   }
   const latest = deployments().at(-1);
+  if (wait.warned || latest.versions.length === 1) return;
+  wait.warned = true;
   const others = latest.versions.filter((v) => v.percentage === 0).map((v) => v.version_id);
   console.log(
     `::warning title=Deploy::${others.join(', ')} still at 0% in ${latest.id} (${message(latest)}) after 10 minutes; replacing it`
@@ -170,8 +174,16 @@ async function branch() {
 
 function production() {
   const release = env.RELEASE_VERSION ? `v${env.RELEASE_VERSION}` : label;
-  const { entries } = wrangler(['deploy', '--tag', release, '--message', `release ${release}`]);
-  const version = output(entries, 'deploy', 'version_id');
+  const versions = JSON.parse(wrangler(['versions', 'list', '--json']).stdout);
+  const again = versions.findLast((v) => v.annotations?.['workers/tag'] === release)?.id;
+  if (again) split([`${again}@100%`], `release ${release}`);
+  const version =
+    again ??
+    output(
+      wrangler(['deploy', '--tag', release, '--message', `release ${release}`]).entries,
+      'deploy',
+      'version_id'
+    );
   summary(`Deployed ${release} as sliccy-ai version ${version}`);
   try {
     return live({ SLICCY_AI_VERSION: version });
@@ -180,6 +192,19 @@ function production() {
   }
 }
 
+function fork() {
+  if (!env.GITHUB_EVENT_PATH) return false;
+  const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
+  const head = event.pull_request?.head?.repo?.full_name;
+  return Boolean(head) && head !== env.GITHUB_REPOSITORY;
+}
+
+if (!token && argv[2] === 'branch' && fork()) {
+  summary(
+    '::notice title=Deploy::a pull request from a fork gets no deploy token; no post-deploy tests'
+  );
+  exit(0);
+}
 if (!token) {
   console.error('deploy: SLICCY_AI_DEPLOY_TOKEN is not set in this job');
   exit(1);
