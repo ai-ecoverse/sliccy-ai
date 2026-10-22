@@ -30,6 +30,8 @@ if (command === 'deployments') {
   state.versions.push({ id, annotations: { 'workers/tag': flag('--tag') } });
   state.deployments.push({ id: 'deployment-' + state.deployments.length, versions: [{ version_id: id, percentage: 100 }], annotations: { 'workers/message': flag('--message') } });
   out({ type: 'deploy', version_id: id });
+  const late = state.inject?.shift();
+  if (late) state.deployments.push(late);
 } else if (command === 'versions' && sub === 'upload') {
   const id = 'branch-' + state.versions.length;
   state.versions.push({ id, annotations: { 'workers/tag': flag('--tag') } });
@@ -319,4 +321,28 @@ test('a first release deploys a new version tagged with it', () => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(versions.at(-1).annotations['workers/tag'], 'v1.11.0');
   assert.equal(latest.versions[0].version_id, versions.at(-1).id);
+});
+
+test('a rollback by hand right after the release deploy stays live through a stale branch write', () => {
+  const rollback = {
+    id: 'rollback',
+    versions: [{ version_id: 'release-new', percentage: 100 }],
+    annotations: { 'workers/message': 'rollback by hand' },
+  };
+  const fixture = setup({ tags: ['v1.10.0'], versions: released, inject: [rollback] });
+  const { result, deployments, versions } = run(fixture, {
+    mode: 'production',
+    RELEASE_VERSION: '1.11.0',
+    GITHUB_REF_NAME: 'main',
+    FAKE_LIVE_WRITES: JSON.stringify([
+      {
+        id: 'stale',
+        versions: [{ version_id: 'deployed-2', percentage: 100 }],
+        annotations: { 'workers/message': 'post-deploy tests for 77/merge 0123456789ab done' },
+      },
+    ]),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(versions.at(-1).annotations['workers/tag'], 'v1.11.0');
+  assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-new', percentage: 100 }]);
 });
