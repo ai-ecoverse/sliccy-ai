@@ -43,38 +43,56 @@ function output(entries, type, key) {
 const deployments = () => JSON.parse(wrangler(['deployments', 'list', '--json']).stdout);
 const stableOf = (deployment) =>
   deployment.versions.reduce((a, b) => (b.percentage > a.percentage ? b : a)).version_id;
-const specs = (deployment) => deployment.versions.map((v) => `${v.version_id}@${v.percentage}%`);
+const message = (deployment) => deployment.annotations?.['workers/message'] ?? '';
+const tests = 'post-deploy tests for ';
+const prefix = `${tests}${env.GITHUB_REF_NAME ?? 'local'} `;
+const branchWrite = (deployment) => message(deployment).startsWith(tests);
+const authority = (list) => list.findLast((deployment) => !branchWrite(deployment));
 
-function split(versions, message) {
-  const { entries } = wrangler(['versions', 'deploy', ...versions, '-y', '--message', message]);
+function split(versions, note) {
+  const { entries } = wrangler(['versions', 'deploy', ...versions, '-y', '--message', note]);
   return output(entries, 'version-deploy', 'deployment_id');
 }
 
-function guard(expected, written, rounds = 5) {
-  const list = deployments();
-  const at = list.findIndex((deployment) => deployment.id === written);
-  if (at < 0 || at !== list.length - 1) return;
-  const before = list[at - 1];
-  if (!before || before.id === expected) return;
-  if (rounds === 0) throw new Error(`deployments kept landing while ${label} restored them`);
-  const restored = split(specs(before), `restore ${before.id}, which ${label} overwrote`);
-  guard(written, restored, rounds - 1);
-  throw new Error(
-    `deployment ${before.id} landed while ${label} switched versions; it is restored`
-  );
+function stableNow(list) {
+  return stableOf(authority(list) ?? list.at(-1));
 }
 
-const prefix = `post-deploy tests for ${env.GITHUB_REF_NAME ?? 'local'} `;
-const stale = (deployment) =>
-  deployment.annotations?.['workers/message']?.startsWith(prefix) ?? false;
+function settle() {
+  for (let round = 0; round < 5; round += 1) {
+    const list = deployments();
+    const latest = list.at(-1);
+    const source = authority(list);
+    if (!source || !branchWrite(latest)) return;
+    const stable = stableOf(source);
+    const current = stableOf(latest);
+    if (current === stable) return;
+    const extra = latest.versions.filter(
+      (v) => v.version_id !== current && v.version_id !== stable
+    );
+    console.log(
+      `::warning title=Deploy::${latest.id} put ${current} at 100% instead of ${stable} from ${source.id}; putting ${stable} back`
+    );
+    split(
+      [`${stable}@100%`, ...extra.map((v) => `${v.version_id}@0%`)],
+      `${tests}${label}: ${stable} back from ${source.id}`
+    );
+  }
+  throw new Error(`the deployment kept changing while ${label} put the stable version back`);
+}
 
 async function quiet() {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const latest = deployments().at(-1);
-    if (latest.versions.length === 1 || stale(latest)) return;
+    if (latest.versions.length === 1 || message(latest).startsWith(prefix)) return;
     console.log(`another version is under test in ${latest.id}, waiting`);
     await setTimeout(15000);
   }
+  const latest = deployments().at(-1);
+  const others = latest.versions.filter((v) => v.percentage === 0).map((v) => v.version_id);
+  console.log(
+    `::warning title=Deploy::${others.join(', ')} still at 0% in ${latest.id} (${message(latest)}) after 10 minutes; replacing it`
+  );
 }
 
 function live(vars) {
@@ -86,16 +104,15 @@ function live(vars) {
 }
 
 function takeOut(version) {
-  const base = deployments().at(-1);
-  if (!base.versions.some((v) => v.version_id === version)) return;
-  const stable = base.versions.filter((v) => v.version_id !== version);
-  if (stable.length === 0)
-    throw new Error(`${version} is the only version in ${base.id}; left as it is`);
-  guard(
-    base.id,
-    split([`${stableOf({ versions: stable })}@100%`], `post-deploy tests for ${label} done`)
-  );
-  summary(`Took ${version} back out of the deployment`);
+  const list = deployments();
+  const latest = list.at(-1);
+  if (latest.versions.some((v) => v.version_id === version)) {
+    const stable = stableNow(list);
+    if (stable === version) throw new Error(`${version} is the stable version; left as it is`);
+    split([`${stable}@100%`], `${prefix}${label.split(' ').at(-1)} done`);
+    summary(`Took ${version} back out of the deployment`);
+  }
+  settle();
 }
 
 async function branch() {
@@ -109,32 +126,17 @@ async function branch() {
     label,
   ]);
   const version = output(entries, 'version-upload', 'version_id');
-  const base = deployments().at(-1);
-  const stable = stableOf(base);
+  await quiet();
+  const stable = stableNow(deployments());
   let status = 1;
   try {
-    guard(
-      base.id,
-      split([`${stable}@100%`, `${version}@0%`], `${prefix}${label.split(' ').at(-1)}`)
-    );
+    split([`${stable}@100%`, `${version}@0%`], `${prefix}${label.split(' ').at(-1)}`);
+    settle();
     status = live({ SLICCY_AI_VERSION: version, SLICCY_AI_STABLE: stable });
   } finally {
     takeOut(version);
   }
   return status;
-}
-
-function hold(version, release) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const latest = deployments().at(-1);
-    if (stableOf(latest) === version) return;
-    console.log(
-      `::warning title=Deploy::${latest.id} replaced ${release}; putting ${version} back`
-    );
-    split([`${version}@100%`], `${release} again, after ${latest.id}`);
-  }
-  if (stableOf(deployments().at(-1)) === version) return;
-  throw new Error(`${release} did not stay deployed`);
 }
 
 function production() {
@@ -145,7 +147,7 @@ function production() {
   try {
     return live({ SLICCY_AI_VERSION: version });
   } finally {
-    hold(version, release);
+    settle();
   }
 }
 

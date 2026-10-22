@@ -186,10 +186,10 @@ CI is one caller workflow, [`ci.yml`](.github/workflows/ci.yml), that runs [slic
   4. run the post-deploy tests against it;
   5. put the version at 100% back alone, even if the tests fail.
 
-  Production traffic never reaches the branch's version. The pipeline's deploy job can't share a lock or a concurrency group with the release, so:
-  - each switch is checked against the deployment history afterwards: if another deployment (a release, say) landed between reading the deployment and writing it, that deployment is put back, the restore is checked the same way, and the job fails;
-  - a version left at 0% by a cancelled run of the same pull request doesn't hold up the next one;
-  - after a release's post-deploy tests, the release checks it is still the version at 100% and puts itself back if a branch's switch replaced it.
+  Production traffic never reaches the branch's version. The pipeline's deploy job can't share a lock or a concurrency group with the release, so the script keeps one rule instead: the version at 100% is the one at 100% in the newest deployment a branch job didn't write (a release, or a rollback by hand). Every deployment a branch job writes has a message starting `post-deploy tests for `, and:
+  - the stable version is read from that newest other deployment, not from whatever is live;
+  - after each switch, and after a release's post-deploy tests, if the latest deployment is a branch job's with another version at 100%, that version is put back, keeping any 0% versions, and a `::warning::` names both deployments;
+  - a version left at 0% by a cancelled run of the same pull request doesn't hold up the next one, and one left by another pull request is replaced, with a warning, after 10 minutes.
 
 The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`npm run test:live`) send `Cloudflare-Workers-Version-Overrides: sliccy-ai="<version>"` on every request to `*.sliccy.ai`, so they reach the version under test, and they wait until `x-sliccy-ai-version` names it. They check:
 - serving `seven`;
