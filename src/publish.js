@@ -104,18 +104,30 @@ export async function verify(token, { fetcher = fetch, now = Date.now() } = {}) 
   if ((claims.repository !== REPOSITORY && !vault) || claims.repository_owner !== OWNER) {
     return { error: `not from ${REPOSITORY} or ${VAULT_REPOSITORY}`, status: 403 };
   }
-  const ref = String(claims.ref ?? '');
-  if (!ref.startsWith('refs/heads/')) return { error: 'not a branch', status: 403 };
-  const branch = ref.slice('refs/heads/'.length);
-  if (vault) return vaultTarget(branch, claims);
+  const source = origin(claims);
+  if (source.error) return source;
+  const { branch, pull } = source;
+  if (vault) return vaultTarget(branch, claims, pull);
   const name = label(branch);
   if (!name) return { error: `${branch} doesn't publish through this route`, status: 403 };
   return { branch, label: name, prefix: `branches/${name}`, host: name };
 }
 
-function vaultTarget(branch, claims) {
+function origin(claims) {
+  const ref = String(claims.ref ?? '');
+  if (ref.startsWith('refs/heads/'))
+    return { branch: ref.slice('refs/heads/'.length), pull: false };
+  if (!/^refs\/pull\/\d+\/merge$/.test(ref)) return { error: 'not a branch', status: 403 };
+  if (claims.event_name !== 'pull_request' || claims.environment !== 'staging')
+    return { error: 'pull requests publish only from their staging environment', status: 403 };
+  const branch = typeof claims.head_ref === 'string' ? claims.head_ref : '';
+  if (!branch) return { error: 'no head_ref', status: 403 };
+  return { branch, pull: true };
+}
+
+function vaultTarget(branch, claims, pull) {
   if (branch === 'main') {
-    if (claims.environment !== 'production')
+    if (pull || claims.environment !== 'production')
       return {
         error: 'slicc-vault main publishes only from its production environment',
         status: 403,
