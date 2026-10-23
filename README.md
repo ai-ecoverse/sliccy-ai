@@ -35,12 +35,18 @@ The proxy doesn't follow redirects. A browser can't read a redirect it doesn't f
 
 The request goes to `https://www.sliccy.ai/<path>`, so the join and controller URLs the hub mints stay on `www.sliccy.ai`, and followers use them there directly. `Cookie` is dropped on the way in and `Set-Cookie` on the way out, so the page's requests and its leader socket carry no ambient credentials. The page swaps the `www.sliccy.ai` host in the controller and WebSocket URLs for its own. Every other tray route stays on `www.sliccy.ai` only.
 
-**Publishing branches without a secret:** `/api/publish/*` on every host lets slicc-bios's branch builds publish with their GitHub Actions OIDC token instead of a Cloudflare token, so a branch never holds a secret that could overwrite `seven/`.
+**Publishing branches without a secret:** `/api/publish/*` on every host lets slicc-bios's branch builds and pull requests publish with their GitHub Actions OIDC token instead of a Cloudflare token, so a branch never holds a secret that could overwrite `seven/`.
 - **The token:** an RS256 JWT, checked against GitHub's keys (`https://token.actions.githubusercontent.com/.well-known/jwks`, cached for 10 minutes). It has to have:
   - `iss` `https://token.actions.githubusercontent.com` and `aud` `https://sliccy.ai`;
   - a valid `exp`, `nbf` and `iat`, with a minute's leeway;
   - `repository` `ai-ecoverse/slicc-bios`, owned by `ai-ecoverse`;
-  - a `ref` of `refs/heads/<branch>`.
+  - a `ref` of `refs/heads/<branch>`, or a pull request's (below).
+- **Pull requests:** slicc-shared-web's pipeline publishes a pull request's preview from its `deploy` job, whose token has a `ref` of `refs/pull/<number>/merge`. Such a token is accepted only with:
+  - `event_name` `pull_request` and `environment` `staging`;
+  - a `ref` matching `^refs/pull/\d+/merge$` exactly (`refs/pull/<number>/head` is refused);
+  - a non-empty `head_ref`, the pull request's branch, which then stands for `<branch>` everywhere below. A pull request and a push of its branch write the same preview, and the manifest names the branch either way.
+
+  A pull request from a fork gets no token there. A pull request token never writes `seven/` or `vault/main/`.
 - **The label comes from the token, not the URL:** `<branch>` maps to `branches/<label>/` by the same rule as slicc-bios's `edge/publish.mjs`. `main`, `seven` and `www` are refused, so `seven/` can't be written this way at all.
 - **Owners:** if `branches/<label>.json` already names another branch (`feat/x` and `feat-x` share a label), every call gets 409.
 - **The API:**
@@ -63,7 +69,8 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
   - **Caching:** `cache-control: no-cache` and the ETag, as for seven.
   - **Cookies:** none set.
 - **Publishing:** slicc-vault publishes through the same `/api/publish/*` route (on any host but a vault host), with an OIDC token whose `repository` is `ai-ecoverse/slicc-vault`.
-  - `main` publishes to `vault/main/` only when the token's `environment` is `production`, i.e. from a job in slicc-vault's `production` environment.
+  - `main` publishes to `vault/main/` only from a push to `main` whose token's `environment` is `production`, i.e. from a job in slicc-vault's `production` environment. A pull request token with `head_ref` `main` is refused.
+  - A pull request publishes its `head_ref`'s preview, with the token checks of slicc-bios's pull requests.
   - Every other branch publishes to `vault/branches/<label>/`. The label is the branch name lower-cased, with runs of other characters turned into `-`, cut to 57 characters so `vault-<label>` fits a DNS label. slicc-bios's reserved names don't apply here, so `vault-seven` is fine. A vault branch named `preview` can't publish, since `vault-preview` is the shared preview vault.
 - **Reserved names:** slicc-bios branches named `vault` or `vault-*` can't publish, so they can never take a vault host.
 
