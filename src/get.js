@@ -16,6 +16,7 @@ export const TOOLS = {
   mcpcat: { repo: 'mcpcat', about: 'mcpcat, the MCP client and proxy' },
   open: { repo: 'slicc-open', about: 'slicc-open, the scopen command' },
   'slicc-capture': { repo: 'slicc-capture', about: 'slicc-capture, the sccapture command' },
+  man: { repo: 'slicc-man', about: 'slicc-man, the scman command' },
 };
 
 const HEADERS = {
