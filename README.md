@@ -185,8 +185,9 @@ CI is one caller workflow, [`ci.yml`](.github/workflows/ci.yml), that runs [slic
   1. wait while another branch's version is in the deployment (up to 10 minutes);
   2. `wrangler versions upload`;
   3. add that version to the live deployment at 0% of the traffic, next to the stable version read just before;
-  4. run the post-deploy tests against it;
-  5. put the version at 100% back alone, even if the tests fail.
+  4. wait, up to 90 seconds, until `seven`, `vault`, `ntfy`, `mcpcat` and `get.sliccy.ai` each answer from it three times in a row, since the edge picks up a new deployment a few seconds after wrangler returns (a release waits the same way);
+  5. run the post-deploy tests against it, even if the wait gave up;
+  6. put the version at 100% back alone, even if the tests fail.
 
   Production traffic never reaches the branch's version. The pipeline's deploy job can't share a lock or a concurrency group with the release, so the script keeps one rule instead: the version at 100% is the one at 100% in the newest deployment a branch job didn't write (a release, or a rollback by hand). Every deployment a branch job writes has a message starting `post-deploy tests for `, and:
   - the stable version is decided once, before the job writes anything, and kept by version id through every later switch, put-back and cleanup, so the job's own writes pushing that deployment out of the history don't change it; only a release or rollback by hand that lands during the job replaces it. It's read from that newest other deployment, not from whatever is live. `wrangler deployments list` only returns the last 10, so when every one of those is a branch job's, the stable version is the one tagged with the newest `v*` git tag of this repository, never an older one, deployed by its version id (found in `wrangler versions list`, or among the versions in the deployment history), since wrangler's `--version-tag` doesn't find it; if no deployable version has that tag, the job fails without switching anything;

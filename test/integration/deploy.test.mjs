@@ -66,6 +66,21 @@ state.deployments.push(...JSON.parse(process.env.FAKE_LIVE_WRITES ?? '[]'));
 writeFileSync(file, JSON.stringify(state));
 `;
 
+const fakeFetch = `import { appendFileSync } from 'node:fs';
+const lag = process.env.FAKE_EDGE_LAG ?? '0';
+const seen = new Map();
+globalThis.fetch = async (url, init = {}) => {
+  const asked = /sliccy-ai="([^"]+)"/.exec(init.headers?.['cloudflare-workers-version-overrides'] ?? '')?.[1];
+  const calls = (seen.get(url) ?? 0) + 1;
+  seen.set(url, calls);
+  if (process.env.FAKE_EDGE_LOG) appendFileSync(process.env.FAKE_EDGE_LOG, url + ' ' + asked + '\\n');
+  const served = lag !== 'never' && calls > Number(lag) ? asked : 'stable';
+  return new Response('ok', { headers: { 'x-sliccy-ai-version': served } });
+};
+`;
+const fetchModule = join(root, 'fetch.mjs');
+writeFileSync(fetchModule, fakeFetch);
+
 let count = 0;
 
 function setup({ tags, versions, inject = [], live = 'release-new' }) {
@@ -106,6 +121,7 @@ function run({ repo, wrangler, state, dir }, { mode = 'branch', ...extra } = {})
       GITHUB_REF_NAME: '76/merge',
       GITHUB_REPOSITORY: 'ai-ecoverse/sliccy-ai',
       GITHUB_SHA: 'feedfacecafebeef',
+      NODE_OPTIONS: `--import=${fetchModule}`,
       ...extra,
     },
   });
@@ -345,4 +361,44 @@ test('a rollback by hand right after the release deploy stays live through a sta
   assert.equal(result.status, 0, result.stderr);
   assert.equal(versions.at(-1).annotations['workers/tag'], 'v1.11.0');
   assert.deepEqual(deployments.at(-1).versions, [{ version_id: 'release-new', percentage: 100 }]);
+});
+
+test('the live tests wait until every edge host serves the branch version three times in a row', () => {
+  const fixture = setup({ tags: ['v1.10.0'], versions: released });
+  const log = join(fixture.dir, 'edge.log');
+  const { result } = run(fixture, { FAKE_EDGE_LAG: '1', FAKE_EDGE_LOG: log });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /The edge served branch-2 on 5 hosts after \d+\.\d s\n/);
+  assert.ok(
+    result.stdout.indexOf('The edge served') < result.stdout.indexOf('Testing sliccy-ai version')
+  );
+  const calls = readFileSync(log, 'utf8').trim().split('\n');
+  assert.equal(calls.length, 20);
+  assert.ok(calls.every((line) => line.endsWith(' branch-2')));
+  assert.ok(calls.some((line) => line.startsWith('https://ntfy.sliccy.ai/v1/health ')));
+});
+
+test('an edge that never serves the new version is given up on in bounded time, and the live tests still run', () => {
+  const { result, latest } = run(setup({ tags: ['v1.10.0'], versions: released }), {
+    FAKE_EDGE_LAG: 'never',
+    SLICCY_AI_EDGE_MS: '1500',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(
+    result.stdout,
+    /::warning title=Deploy::the edge still did not serve branch-2 on https:\/\/seven\.sliccy\.ai\/, .* after [12]\.\d s; running the live tests anyway/
+  );
+  assert.match(result.stdout, /Testing sliccy-ai version branch-2/);
+  assert.deepEqual(latest.versions, [{ version_id: 'release-new', percentage: 100 }]);
+});
+
+test('a release waits for the edge to serve it before its live tests', () => {
+  const { result } = run(setup({ tags: ['v1.10.0'], versions: released }), {
+    mode: 'production',
+    RELEASE_VERSION: '1.11.0',
+    GITHUB_REF_NAME: 'main',
+    FAKE_EDGE_LAG: '1',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /The edge served deployed-2 on 5 hosts after/);
 });
