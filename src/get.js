@@ -1,7 +1,8 @@
 import { UNFRAMED } from './frames.js';
 
 const RELEASES = 'https://github.com/ai-ecoverse';
-const latest = (repo) => `${RELEASES}/${repo}/releases/latest/download/install.sh`;
+const latest = (repo, file = 'install.sh') =>
+  `${RELEASES}/${repo}/releases/latest/download/${file}`;
 
 export const TOOLS = {
   slicc: { repo: 'slicc-cli', about: 'the slicc CLI' },
@@ -26,13 +27,38 @@ export function wrapper(tool) {
   return `#!/bin/sh\nset -eu\ncurl -fsSL ${latest(repo)} | sh -s -- --only ${only} "$@"\n`;
 }
 
+export function powershell(tool) {
+  const { repo, only } = TOOLS[tool];
+  const select = only ? ` -Only ${only}` : '';
+  return [
+    '& {',
+    "  $ErrorActionPreference = 'Stop'",
+    '  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072',
+    `  try { $installer = Invoke-RestMethod '${latest(repo, 'install.ps1')}' }`,
+    '  catch {',
+    '    if ([int]$_.Exception.Response.StatusCode -ne 404) { throw }',
+    `    throw '${tool} is not available for Windows yet; see ${RELEASES}/${repo}/releases'`,
+    '  }',
+    `  & ([scriptblock]::Create($installer))${select} @args`,
+    '} @args',
+    '',
+  ].join('\n');
+}
+
 function index() {
-  const width = Math.max(...Object.keys(TOOLS).map((tool) => tool.length));
-  const lines = Object.entries(TOOLS).map(
+  const blocks = Object.entries(TOOLS).map(
     ([tool, { about }]) =>
-      `curl -fsSL https://get.sliccy.ai/${tool} | sh${' '.repeat(width - tool.length)}  # ${about}`
+      `${about}\n  curl -fsSL https://get.sliccy.ai/${tool} | sh\n  irm https://get.sliccy.ai/${tool}.ps1 | iex`
   );
-  return `Install SLICC tools:\n\n${lines.join('\n')}\n\nAppend "-s -- --help" to sh for each installer's options.\n`;
+  return [
+    'Install SLICC tools with sh on macOS and Linux, or with PowerShell on Windows:',
+    '',
+    blocks.join('\n\n'),
+    '',
+    'Append "-s -- --help" to sh for each installer\'s options. In PowerShell, pass options with',
+    '  & ([scriptblock]::Create((irm https://get.sliccy.ai/<tool>.ps1))) <options>',
+    '',
+  ].join('\n');
 }
 
 export function get(request, url) {
@@ -48,6 +74,8 @@ export function get(request, url) {
     });
   const name = url.pathname.slice(1);
   if (url.pathname === '/') return body(index());
+  const windows = name.endsWith('.ps1') ? name.slice(0, -4) : null;
+  if (windows !== null && Object.hasOwn(TOOLS, windows)) return body(powershell(windows));
   const tool = Object.hasOwn(TOOLS, name) ? TOOLS[name] : null;
   if (!tool) return body(`no installer named ${name}; see https://get.sliccy.ai/\n`, 404);
   if (tool.only) return body(wrapper(name));

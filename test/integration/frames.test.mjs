@@ -88,6 +88,8 @@ test('seven on www.sliccy.ai sends frame headers on every answer it makes, and s
 test('get.sliccy.ai and mcpcat.sliccy.ai refuse to be framed on every answer', async () => {
   assert.deepEqual(await frames('https://get.sliccy.ai/'), none(200));
   assert.deepEqual(await frames('https://get.sliccy.ai/slicc'), none(302));
+  assert.deepEqual(await frames('https://get.sliccy.ai/slicc.ps1'), none(200));
+  assert.deepEqual(await frames('https://get.sliccy.ai/nothing.ps1'), none(404));
   assert.deepEqual(await frames('https://get.sliccy.ai/nothing'), none(404));
   assert.deepEqual(
     await frames('https://get.sliccy.ai/', { method: 'POST', body: 'x' }),
