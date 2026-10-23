@@ -160,6 +160,54 @@ async function quiet() {
   );
 }
 
+const edgeHosts = [
+  'https://seven.sliccy.ai/',
+  'https://vault.sliccy.ai/',
+  'https://ntfy.sliccy.ai/v1/health',
+  'https://mcpcat.sliccy.ai/oauth/client.json',
+  'https://get.sliccy.ai/',
+];
+
+async function answer(url, version, until) {
+  try {
+    const response = await fetch(url, {
+      headers: { 'cloudflare-workers-version-overrides': `sliccy-ai="${version}"` },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(Math.max(1, Math.min(10000, until - Date.now()))),
+    });
+    await response.body?.cancel();
+    return response.headers.get('x-sliccy-ai-version');
+  } catch {
+    return undefined;
+  }
+}
+
+async function edge(version) {
+  const start = Date.now();
+  const until = start + Number(env.SLICCY_AI_EDGE_MS ?? 90000);
+  const streaks = new Map(edgeHosts.map((url) => [url, 0]));
+  while (Date.now() < until) {
+    const pending = [...streaks].filter(([, streak]) => streak < 3).map(([url]) => url);
+    const answers = await Promise.all(pending.map((url) => answer(url, version, until)));
+    pending.forEach((url, i) => {
+      streaks.set(url, answers[i] === version ? streaks.get(url) + 1 : 0);
+    });
+    const seconds = ((Date.now() - start) / 1000).toFixed(1);
+    if ([...streaks.values()].every((streak) => streak >= 3)) {
+      summary(`The edge served ${version} on ${edgeHosts.length} hosts after ${seconds} s`);
+      return true;
+    }
+    const missed = answers.some((value) => value !== version);
+    await setTimeout(Math.max(0, Math.min(missed ? 2000 : 250, until - Date.now())));
+  }
+  const behind = [...streaks].filter(([, streak]) => streak < 3).map(([url]) => url);
+  const seconds = ((Date.now() - start) / 1000).toFixed(1);
+  summary(
+    `::warning title=Deploy::the edge still did not serve ${version} on ${behind.join(', ')} after ${seconds} s; running the live tests anyway`
+  );
+  return false;
+}
+
 function live(vars) {
   const clean = { ...env, ...vars };
   delete clean.SLICCY_AI_DEPLOY_TOKEN;
@@ -197,6 +245,7 @@ async function branch() {
     const stable = target(plan, deployments());
     split([`${stable.id}@100%`, `${version}@0%`], `${prefix}${label.split(' ').at(-1)}`);
     settle(plan);
+    await edge(version);
     status = live({ SLICCY_AI_VERSION: version, SLICCY_AI_STABLE: stable.id });
   } finally {
     takeOut(version, plan);
@@ -204,7 +253,7 @@ async function branch() {
   return status;
 }
 
-function production() {
+async function production() {
   const release = env.RELEASE_VERSION ? `v${env.RELEASE_VERSION}` : label;
   const versions = JSON.parse(wrangler(['versions', 'list', '--json']).stdout);
   const again = versions.findLast((v) => v.annotations?.['workers/tag'] === release)?.id;
@@ -223,6 +272,7 @@ function production() {
   );
   const seen = new Set(list.slice(0, own < 0 ? list.length : own + 1).map(({ id }) => id));
   try {
+    await edge(version);
     return live({ SLICCY_AI_VERSION: version });
   } finally {
     settle({ id: version, from: `release ${release}`, seen });
