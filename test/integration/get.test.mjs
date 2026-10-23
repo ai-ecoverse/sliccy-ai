@@ -65,7 +65,15 @@ test('a multi-tool repo passes the same --only selection as -Only', async () => 
 });
 
 test('every tool has a PowerShell answer, and HEAD has no body', async () => {
-  for (const tool of ['slicc', 'jerk', 'mcpcat', 'open', 'playwright-cli', 'curlwright']) {
+  for (const tool of [
+    'slicc',
+    'jerk',
+    'mcpcat',
+    'open',
+    'slicc-capture',
+    'playwright-cli',
+    'curlwright',
+  ]) {
     const response = await get(`/${tool}.ps1`, { method: 'HEAD' });
     assert.equal(response.status, 200, tool);
     headers(response);
@@ -77,7 +85,15 @@ test('the index lists the PowerShell one-liner next to each sh one-liner', async
   const response = await get('/');
   headers(response);
   const text = await response.text();
-  for (const tool of ['slicc', 'jerk', 'mcpcat', 'open', 'playwright-cli', 'curlwright'])
+  for (const tool of [
+    'slicc',
+    'jerk',
+    'mcpcat',
+    'open',
+    'slicc-capture',
+    'playwright-cli',
+    'curlwright',
+  ])
     assert.ok(
       text.includes(
         `  curl -fsSL https://get.sliccy.ai/${tool} | sh\n  irm https://get.sliccy.ai/${tool}.ps1 | iex\n`
@@ -141,5 +157,21 @@ test('open installs slicc-open from its latest release, on sh and on Windows', a
   headers(windows);
   const script = await windows.text();
   assert.ok(script.includes(`Invoke-RestMethod '${ps1('slicc-open')}'`));
+  assert.doesNotMatch(script, /-Only/);
+});
+
+test('slicc-capture installs from its latest release, on sh and on Windows', async () => {
+  const moved = await get('/slicc-capture');
+  assert.equal(moved.status, 302);
+  assert.equal(
+    moved.headers.get('location'),
+    `${releases('slicc-capture')}/latest/download/install.sh`
+  );
+  await moved.arrayBuffer();
+  const windows = await get('/slicc-capture.ps1');
+  assert.equal(windows.status, 200);
+  headers(windows);
+  const script = await windows.text();
+  assert.ok(script.includes(`Invoke-RestMethod '${ps1('slicc-capture')}'`));
   assert.doesNotMatch(script, /-Only/);
 });
