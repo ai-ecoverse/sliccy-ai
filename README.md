@@ -84,6 +84,7 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 | `open` | `302` to slicc-open's latest `install.sh` (the `scopen` command) |
 | `slicc-capture` | `302` to slicc-capture's latest `install.sh` (the `sccapture` command) |
 | `man` | `302` to slicc-man's latest `install.sh` (the `scman` command) |
+| `slicc-audio` | `302` to slicc-audio's latest `install.sh` (`say`, `hear`, `afplay`, `chime`) |
 | `playwright-cli`, `curlwright` | a three-line `sh` script, fixed here, that pipes slicc-cdp's latest `install.sh` to `sh -s -- --only <tool>` and passes on the caller's arguments (a release URL can't carry them) |
 
 - **Windows:** `/<tool>.ps1`, for every `<tool>` above, is a short PowerShell script, fixed here, that downloads the tool repo's latest release asset `install.ps1` and runs it. The Worker asks GitHub nothing; the script does.
