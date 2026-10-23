@@ -17,6 +17,7 @@ export const TOOLS = {
   open: { repo: 'slicc-open', about: 'slicc-open, the scopen command' },
   'slicc-capture': { repo: 'slicc-capture', about: 'slicc-capture, the sccapture command' },
   man: { repo: 'slicc-man', about: 'slicc-man, the scman command' },
+  'slicc-audio': { repo: 'slicc-audio', about: 'slicc-audio: say, hear, afplay and chime' },
 };
 
 const HEADERS = {
