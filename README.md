@@ -74,7 +74,7 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
   - Every other branch publishes to `vault/branches/<label>/`. The label is the branch name lower-cased, with runs of other characters turned into `-`, cut to 57 characters so `vault-<label>` fits a DNS label. slicc-bios's reserved names don't apply here, so `vault-seven` is fine. A vault branch named `preview` can't publish, since `vault-preview` is the shared preview vault.
 - **Reserved names:** slicc-bios branches named `vault` or `vault-*` can't publish, so they can never take a vault host.
 
-**Installers:** `https://get.sliccy.ai/<tool>` is a short installer URL, so a tool installs with `curl -fsSL https://get.sliccy.ai/<tool> | sh`. The table is in [`src/get.js`](src/get.js).
+**Installers:** `https://get.sliccy.ai/<tool>` is a short installer URL, so a tool installs with `curl -fsSL https://get.sliccy.ai/<tool> | sh`, and on Windows with `irm https://get.sliccy.ai/<tool>.ps1 | iex` in PowerShell. The table is in [`src/get.js`](src/get.js).
 
 | `<tool>` | Answer |
 |---|---|
@@ -83,7 +83,11 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 | `mcpcat` | `302` to mcpcat's latest `install.sh` |
 | `playwright-cli`, `curlwright` | a three-line `sh` script, fixed here, that pipes slicc-cdp's latest `install.sh` to `sh -s -- --only <tool>` and passes on the caller's arguments (a release URL can't carry them) |
 
-- `/` lists the one-liners, and everything else is a 404.
+- **Windows:** `/<tool>.ps1`, for every `<tool>` above, is a short PowerShell script, fixed here, that downloads the tool repo's latest release asset `install.ps1` and runs it. The Worker asks GitHub nothing; the script does.
+  - For slicc-cdp's tools it passes `-Only <tool>`, the PowerShell form of the sh wrapper's `--only <tool>`, so a repo's `install.ps1` takes an `-Only` parameter. The caller's arguments are passed on too, with `& ([scriptblock]::Create((irm https://get.sliccy.ai/<tool>.ps1))) <options>`.
+  - If the release has no `install.ps1` (a 404), it stops with `<tool> is not available for Windows yet; see https://github.com/ai-ecoverse/<repo>/releases`, a terminating error (so `powershell -Command` exits 1), and runs nothing. Other download errors stop it too.
+  - It runs inside a script block, so it leaves no variables in the caller's session, and it turns on TLS 1.2 for Windows PowerShell 5.1.
+- `/` lists the sh and PowerShell one-liners for each tool, and everything else, an unknown `/<x>.ps1` included, is a 404.
 - Every answer is `text/plain`, with `cache-control: max-age=300`, `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`, no cookies and no CORS headers.
 - Only GET and HEAD are answered.
 - A slicc-bios branch named `get` can't publish.
