@@ -14,6 +14,7 @@ export const TOOLS = {
   },
   curlwright: { repo: 'slicc-cdp', only: 'curlwright', about: 'curlwright from slicc-cdp' },
   mcpcat: { repo: 'mcpcat', about: 'mcpcat, the MCP client and proxy' },
+  open: { repo: 'slicc-open', about: 'slicc-open, the scopen command' },
 };
 
 const HEADERS = {
