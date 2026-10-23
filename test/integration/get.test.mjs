@@ -71,6 +71,7 @@ test('every tool has a PowerShell answer, and HEAD has no body', async () => {
     'mcpcat',
     'open',
     'slicc-capture',
+    'man',
     'playwright-cli',
     'curlwright',
   ]) {
@@ -91,6 +92,7 @@ test('the index lists the PowerShell one-liner next to each sh one-liner', async
     'mcpcat',
     'open',
     'slicc-capture',
+    'man',
     'playwright-cli',
     'curlwright',
   ])
@@ -173,5 +175,21 @@ test('slicc-capture installs from its latest release, on sh and on Windows', asy
   headers(windows);
   const script = await windows.text();
   assert.ok(script.includes(`Invoke-RestMethod '${ps1('slicc-capture')}'`));
+  assert.doesNotMatch(script, /-Only/);
+});
+
+test('man installs slicc-man from its latest release, on sh and on Windows', async () => {
+  const moved = await get('/man');
+  assert.equal(moved.status, 302);
+  assert.equal(
+    moved.headers.get('location'),
+    `${releases('slicc-man')}/latest/download/install.sh`
+  );
+  await moved.arrayBuffer();
+  const windows = await get('/man.ps1');
+  assert.equal(windows.status, 200);
+  headers(windows);
+  const script = await windows.text();
+  assert.ok(script.includes(`Invoke-RestMethod '${ps1('slicc-man')}'`));
   assert.doesNotMatch(script, /-Only/);
 });
