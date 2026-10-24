@@ -7,12 +7,25 @@ import { Miniflare } from 'miniflare';
 const root = new URL('../../', import.meta.url);
 const config = JSON.parse(readFileSync(new URL('wrangler.json', root)));
 
-const hub = `export default {
+const hub = `const frames = {
+  wide: { 'content-security-policy': "default-src *; frame-ancestors *", 'x-frame-options': 'ALLOWALL' },
+  none: { 'content-security-policy': "default-src 'self'; frame-ancestors 'none'", 'x-frame-options': 'DENY' },
+};
+export default {
   async fetch(request) {
+    const response = await answer(request);
+    if (response.webSocket) return response;
+    const headers = new Headers(response.headers);
+    for (const [name, value] of Object.entries(frames[request.headers.get('x-six-frames')] ?? {})) headers.set(name, value);
+    return new Response(response.body, { status: response.status, headers });
+  },
+};
+async function answer(request) {
     const url = new URL(request.url);
     if (url.pathname === '/join/old') {
       return new Response('{"result":{"action":"redirect"}}', { status: 308, headers: { location: 'https://www.sliccy.ai/join/new' } });
     }
+    if (url.pathname === '/join/gone') return new Response('gone', { status: 404 });
     if (request.headers.get('upgrade') === 'websocket') {
       const [client, server] = Object.values(new WebSocketPair());
       server.accept();
@@ -23,8 +36,7 @@ const hub = `export default {
       { url: request.url, method: request.method, cookie: request.headers.get('cookie'), body: await request.text() },
       { status: 201, headers: { 'set-cookie': 'session=1' } }
     );
-  },
-};`;
+}`;
 
 const worker = new Miniflare({
   workers: [
@@ -183,3 +195,52 @@ test('a GET of a guest-seat route never reaches the hub', async () => {
   assert.equal(response.status, 404);
   await response.body?.cancel();
 });
+
+const answers = [
+  ['GET', '/join/abc', 201],
+  ['GET', '/controller/abc', 201],
+  ['GET', '/tray', 201],
+  ['GET', '/join/old', 200],
+  ['GET', '/join/gone', 404],
+  ['HEAD', '/join/abc', 201],
+  ['POST', '/tray', 201],
+  ['POST', '/api/tray/t1/biscotto', 201],
+];
+const policies = {
+  '': [null, null],
+  wide: ['default-src *; frame-ancestors *', 'ALLOWALL'],
+  none: ["default-src 'self'; frame-ancestors 'none'", 'DENY'],
+};
+
+for (const [six, [csp, xfo]] of Object.entries(policies)) {
+  test(`tray answers can only be framed by their own origin when six sends ${six || 'no'} frame headers`, async () => {
+    for (const base of [
+      'https://seven.sliccy.ai',
+      'https://feat-x.sliccy.ai',
+      'https://www.sliccy.ai/7',
+    ]) {
+      for (const [method, path, status] of answers) {
+        const response = await worker.dispatchFetch(`${base}${path}`, {
+          method,
+          headers: six ? { 'x-six-frames': six } : {},
+          body: method === 'POST' ? '{}' : undefined,
+        });
+        await response.arrayBuffer();
+        const where = `${method} ${base}${path}`;
+        assert.equal(response.status, status, where);
+        assert.equal(
+          response.headers.get('content-security-policy'),
+          [csp, "frame-ancestors 'self'"].filter(Boolean).join(', '),
+          where
+        );
+        assert.equal(
+          response.headers.get('x-frame-options'),
+          xfo === 'DENY' ? 'DENY' : 'SAMEORIGIN',
+          where
+        );
+        assert.equal(response.headers.get('cache-control'), 'no-store', where);
+        assert.equal(response.headers.get('set-cookie'), null, where);
+      }
+    }
+  });
+}
