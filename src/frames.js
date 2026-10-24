@@ -13,3 +13,11 @@ export function framed(response, frames) {
     if (!response.headers.has(name)) response.headers.set(name, value);
   return response;
 }
+
+export function bounded(response) {
+  response.headers.append('content-security-policy', SELF_FRAMED['content-security-policy']);
+  const xfo = (response.headers.get('x-frame-options') ?? '').toLowerCase().split(',');
+  if (!xfo.some((value) => value.trim() === 'deny'))
+    response.headers.set('x-frame-options', SELF_FRAMED['x-frame-options']);
+  return response;
+}

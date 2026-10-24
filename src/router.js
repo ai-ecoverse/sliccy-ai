@@ -1,5 +1,5 @@
 import { echo } from './echo.js';
-import { framed, SELF_FRAMED } from './frames.js';
+import { bounded, framed, SELF_FRAMED } from './frames.js';
 import { get } from './get.js';
 import { mcpcat } from './mcpcat.js';
 import { ntfy } from './ntfy.js';
@@ -154,7 +154,7 @@ async function tray(url, request, env) {
   }
   response.headers.delete('set-cookie');
   response.headers.set('cache-control', 'no-store');
-  return response;
+  return bounded(response);
 }
 
 const navigation = (headers) =>
