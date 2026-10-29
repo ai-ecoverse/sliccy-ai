@@ -19,5 +19,6 @@ export function bounded(response) {
   const xfo = (response.headers.get('x-frame-options') ?? '').toLowerCase().split(',');
   if (!xfo.some((value) => value.trim() === 'deny'))
     response.headers.set('x-frame-options', SELF_FRAMED['x-frame-options']);
+  response.headers.set('referrer-policy', 'no-referrer');
   return response;
 }
