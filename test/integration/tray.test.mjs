@@ -17,6 +17,8 @@ export default {
     if (response.webSocket) return response;
     const headers = new Headers(response.headers);
     for (const [name, value] of Object.entries(frames[request.headers.get('x-six-frames')] ?? {})) headers.set(name, value);
+    const referrer = request.headers.get('x-six-referrer');
+    if (referrer) headers.set('referrer-policy', referrer);
     return new Response(response.body, { status: response.status, headers });
   },
 };
@@ -244,3 +246,25 @@ for (const [six, [csp, xfo]] of Object.entries(policies)) {
     }
   });
 }
+
+test('tray answers send no referrer whatever referrer-policy six sends', async () => {
+  for (const six of [null, 'unsafe-url', 'no-referrer']) {
+    for (const base of [
+      'https://seven.sliccy.ai',
+      'https://feat-x.sliccy.ai',
+      'https://www.sliccy.ai/7',
+    ]) {
+      for (const [method, path, status] of answers) {
+        const response = await worker.dispatchFetch(`${base}${path}`, {
+          method,
+          headers: six ? { 'x-six-referrer': six } : {},
+          body: method === 'POST' ? '{}' : undefined,
+        });
+        await response.arrayBuffer();
+        const where = `${six} ${method} ${base}${path}`;
+        assert.equal(response.status, status, where);
+        assert.equal(response.headers.get('referrer-policy'), 'no-referrer', where);
+      }
+    }
+  }
+});
