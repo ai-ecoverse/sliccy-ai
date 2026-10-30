@@ -1,3 +1,4 @@
+import { CLIENT_PATH, client } from './client.js';
 import { echo } from './echo.js';
 import { bounded, framed, SELF_FRAMED } from './frames.js';
 import { get } from './get.js';
@@ -186,6 +187,7 @@ async function sevenOnWww(request, env, url, inner) {
       ? new Response(null, { status: 302, headers: { location: `${BIOS_ON_WWW}/` } })
       : new Response('not found', { status: 404 });
   }
+  if (inner.pathname === CLIENT_PATH) return client(request, `${WWW}${BIOS_ON_WWW}`);
   if (!readable(request)) {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
   }
@@ -210,8 +212,15 @@ async function serve(request, env) {
   return framed(await seven(request, env, url), SELF_FRAMED);
 }
 
+async function published(env, url) {
+  const label = url.hostname.split('.')[0];
+  return label === 'seven' || (await env.BIOS.head(`branches/${label}.json`)) !== null;
+}
+
 async function seven(request, env, url) {
   if (url.pathname.startsWith('/api/publish/')) return publish(request, env);
+  if (url.pathname === CLIENT_PATH && (await published(env, url)))
+    return client(request, `https://${url.hostname}`);
   if (!readable(request)) {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
   }
