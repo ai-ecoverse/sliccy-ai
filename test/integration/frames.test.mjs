@@ -28,6 +28,8 @@ const bucket = await worker.getR2Bucket(binding);
 await bucket.put('seven/index.html', '<!doctype html><title>seven</title>');
 await bucket.put('seven/bios.js', 'export {};');
 await bucket.put('branches/feat-shell/index.html', '<!doctype html><title>branch</title>');
+await bucket.put('branches/feat-shell.json', '{"branch":"feat/shell","files":[]}');
+await bucket.put('vault/main/index.html', '<!doctype html><title>vault</title>');
 
 async function frames(url, init) {
   const response = await worker.dispatchFetch(url, { redirect: 'manual', ...init });
@@ -83,6 +85,39 @@ test('seven on www.sliccy.ai sends frame headers on every answer it makes, and s
   const unframed = { status: 200, csp: null, xfo: null };
   assert.deepEqual(await frames('https://www.sliccy.ai/status'), unframed);
   assert.deepEqual(await frames('https://seven.sliccy.ai/fonts/AdobeClean-Regular.otf'), unframed);
+});
+
+async function ancestors(url, init) {
+  const response = await worker.dispatchFetch(url, { redirect: 'manual', ...init });
+  await response.arrayBuffer();
+  const csp = response.headers.get('content-security-policy') ?? '';
+  return [response.status, csp.split('; ').filter((part) => part.startsWith('frame-ancestors '))];
+}
+
+test('the vault hosts name exactly their embedders in frame-ancestors on every answer they make', async () => {
+  const main = ['frame-ancestors https://seven.sliccy.ai https://www.sliccy.ai'];
+  const { headers } = await worker.dispatchFetch('https://vault.sliccy.ai/');
+  assert.deepEqual(await ancestors('https://vault.sliccy.ai/'), [200, main]);
+  assert.deepEqual(await ancestors('https://vault.sliccy.ai/', { method: 'HEAD' }), [200, main]);
+  assert.deepEqual(await ancestors('https://vault.sliccy.ai/missing'), [404, main]);
+  assert.deepEqual(await ancestors('https://vault.sliccy.ai/', { method: 'POST', body: 'x' }), [
+    405,
+    main,
+  ]);
+  assert.deepEqual(
+    await ancestors('https://vault.sliccy.ai/', {
+      headers: { 'if-none-match': headers.get('etag') },
+    }),
+    [304, main]
+  );
+  assert.deepEqual(await ancestors('https://vault.sliccy.ai/embedders.json'), [200, main]);
+  const preview = [
+    'frame-ancestors https://feat-shell.sliccy.ai http://localhost:* http://127.0.0.1:*',
+  ];
+  for (const host of ['vault-preview', 'vault-some-branch']) {
+    assert.deepEqual(await ancestors(`https://${host}.sliccy.ai/missing`), [404, preview]);
+    assert.deepEqual(await ancestors(`https://${host}.sliccy.ai/embedders.json`), [200, preview]);
+  }
 });
 
 test('get.sliccy.ai and mcpcat.sliccy.ai refuse to be framed on every answer', async () => {
