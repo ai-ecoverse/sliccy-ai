@@ -638,7 +638,7 @@ export class NtfyHome {
       'content-type': row.type,
       'content-length': String(row.size),
       'content-disposition': 'attachment',
-      'content-security-policy': "default-src 'none'; sandbox",
+      'content-security-policy': "default-src 'none'; frame-ancestors 'none'; sandbox",
       'x-content-type-options': 'nosniff',
       'cache-control': 'private, no-store',
     };

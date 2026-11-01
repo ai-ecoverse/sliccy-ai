@@ -708,3 +708,54 @@ test('one token holds at most 8 open streams', async () => {
   assert.equal(theirs.status, 200);
   for (const stream of [...open, theirs]) await stream.body.cancel();
 });
+
+test('every answer of the gateway refuses to be framed, streams and files included', async () => {
+  const framing = (response) => [
+    response.headers.get('content-security-policy'),
+    response.headers.get('x-frame-options'),
+  ];
+  const none = ["frame-ancestors 'none'", 'DENY'];
+  const sandboxed = ["default-src 'none'; frame-ancestors 'none'; sandbox", 'DENY'];
+  const created = await post('/api/home', {}, JSON.stringify({ controllerToken: 'tray1.leader' }));
+  assert.deepEqual(framing(created), none);
+  const home = await created.json();
+  const kernel = await mint(home, { member: 'kernel', scopes: ['subscribe', 'publish', 'hooks'] });
+  for (const path of [
+    '/topic/json?poll=1',
+    '/topic/sse?poll=1',
+    '/topic/raw?poll=1',
+    '/topic/auth',
+    '/api/hooks',
+  ]) {
+    const response = await call(path, { headers: bearer(kernel) });
+    assert.equal(response.status, 200, path);
+    assert.deepEqual(framing(response), none, path);
+    await response.arrayBuffer();
+  }
+  const refused = await call(`/api/home/${home.homeId}`, { method: 'DELETE' });
+  assert.equal(refused.status, 401);
+  assert.deepEqual(framing(refused), none);
+  const live = await call('/topic/json', { headers: bearer(kernel) });
+  assert.deepEqual(framing(live), none);
+  await live.body.cancel();
+  const secret = 'verify-me-please';
+  const meta = await hook(kernel, { name: 'meta', secret });
+  const path = new URL(meta.url).pathname;
+  const challenged = await call(
+    `${path}?hub.mode=subscribe&hub.verify_token=${secret}&hub.challenge=42`
+  );
+  assert.equal(await challenged.text(), '42');
+  assert.deepEqual(framing(challenged), sandboxed);
+  const open = await hook(kernel, { name: 'big' });
+  const delivered = await call(new URL(open.url).pathname, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ blob: 'x'.repeat(100 * 1024) }),
+  });
+  assert.deepEqual(framing(delivered), none);
+  const [{ attachment }] = await poll(kernel, 'big');
+  const file = await call(new URL(attachment.url).pathname);
+  assert.equal(file.status, 200);
+  await file.arrayBuffer();
+  assert.deepEqual(framing(file), sandboxed);
+});
