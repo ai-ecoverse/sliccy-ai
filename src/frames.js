@@ -14,6 +14,10 @@ export function framed(response, frames) {
   return response;
 }
 
+export function unframed(response) {
+  return response.status === 101 ? response : framed(response, UNFRAMED);
+}
+
 export function bounded(response) {
   response.headers.append('content-security-policy', SELF_FRAMED['content-security-policy']);
   const xfo = (response.headers.get('x-frame-options') ?? '').toLowerCase().split(',');
