@@ -1,6 +1,6 @@
 import { CLIENT_PATH, client } from './client.js';
 import { echo } from './echo.js';
-import { bounded, framed, SELF_FRAMED } from './frames.js';
+import { bounded, framed, SELF_FRAMED, unframed } from './frames.js';
 import { get } from './get.js';
 import { mcpcat } from './mcpcat.js';
 import { ntfy } from './ntfy.js';
@@ -201,14 +201,14 @@ async function serve(request, env) {
   if (url.origin === WWW) return www(request, env, url);
   if (url.hostname.split('.')[0] === 'mcpcat') return mcpcat(request, url);
   if (url.hostname.split('.')[0] === 'get') return get(request, url);
-  if (url.hostname.split('.')[0] === 'echo') return echo(request, url);
-  if (url.hostname.split('.')[0] === 'ntfy') return ntfy(request, url, env);
+  if (url.hostname.split('.')[0] === 'echo') return unframed(echo(request, url));
+  if (url.hostname.split('.')[0] === 'ntfy') return unframed(await ntfy(request, url, env));
   const vault = vaultOf(url);
   if (vault) return asset(request, env, url, vault);
   if (proxied(url, request)) return tray(url, request, env);
   const font =
     readable(request) && url.pathname.startsWith('/fonts/') && (await fonts(url, request, env));
-  if (font) return font;
+  if (font) return unframed(font);
   return framed(await seven(request, env, url), SELF_FRAMED);
 }
 

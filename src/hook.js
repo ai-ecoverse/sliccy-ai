@@ -146,7 +146,7 @@ export function parsed(body) {
 const SAFE = {
   'cache-control': 'no-store',
   'x-content-type-options': 'nosniff',
-  'content-security-policy': "default-src 'none'; sandbox",
+  'content-security-policy': "default-src 'none'; frame-ancestors 'none'; sandbox",
 };
 const text = (body, status = 200) =>
   new Response(body, { status, headers: { 'content-type': 'text/plain; charset=utf-8', ...SAFE } });
