@@ -167,6 +167,7 @@ async function six(request, env) {
 }
 
 async function www(request, env, url) {
+  if (url.pathname === CLIENT_PATH) return client(request, WWW);
   const bios = url.pathname.startsWith(`${BIOS_ON_WWW}/`);
   if (!bios && url.pathname !== BIOS_ON_WWW && !url.pathname.startsWith('/os/'))
     return six(request, env);

@@ -134,10 +134,10 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 
 **SLICC's client document:** `/oauth/client.json` is SLICC's OAuth Client ID Metadata Document, generated per origin in [`src/client.js`](src/client.js), so every seven has an identity of its own with an authorization server.
 - **What it says:** a public web client (`token_endpoint_auth_method: none`, `application_type: web`), signing in with the code flow and refresh tokens. `client_id` is the document's own `https` URL, and `redirect_uris` is that origin's `/oauth/mcp-callback` alone.
-- **Which origins:** `https://seven.sliccy.ai`, `https://www.sliccy.ai/7` (`/7/oauth/client.json`, redirecting to `/7/oauth/mcp-callback`), and each published slicc-bios branch, whose `branches/<label>.json` manifest exists. It wins over R2, so a file a branch publishes at that path is never served; publishing it is still allowed, as it's harmless. An unpublished label, a service host and every other www path answer as they did.
+- **Which origins:** `https://seven.sliccy.ai`, `https://www.sliccy.ai` (the agent runs from `/opt/agent/` under the service worker's scope `/`, so its redirect is `/oauth/mcp-callback`, which that service worker answers), `https://www.sliccy.ai/7` (`/7/oauth/client.json`, redirecting to `/7/oauth/mcp-callback`), and each published slicc-bios branch, whose `branches/<label>.json` manifest exists. It wins over R2, so a file a branch publishes at that path is never served; publishing it is still allowed, as it's harmless. An unpublished label, a service host and every other www path answer as they did.
 - **How it's served:** as mcpcat's, with `frame-ancestors 'none'` and `X-Frame-Options: DENY`. Methods other than GET and HEAD get 405.
 
-`www.sliccy.ai/*` and `sliccy.ai/*` have more specific routes to `slicc-tray-hub` (SLICC v6), and `*.` doesn't match the bare domain. Only seven's paths on www (`/7`, `/7/*` and `/os/*`) have routes of their own here, more specific still (see below). A proxied wildcard record `AAAA *.sliccy.ai 100::` makes every other subdomain resolve.
+`www.sliccy.ai/*` and `sliccy.ai/*` have more specific routes to `slicc-tray-hub` (SLICC v6), and `*.` doesn't match the bare domain. Only seven's paths on www (`/7`, `/7/*`, `/os/*` and `/oauth/client.json`) have routes of their own here, more specific still (see below). A proxied wildcard record `AAAA *.sliccy.ai 100::` makes every other subdomain resolve.
 
 The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. Every answer this worker makes for `seven` and the branch previews, whatever its status or type (404s, 405s, 304s, 412s, publish errors, scripts), sends `Content-Security-Policy: frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`, so no other site can frame seven. The tray routes add `frame-ancestors 'self'` as a policy of their own next to six's `Content-Security-Policy`, and `X-Frame-Options: SAMEORIGIN` unless six sent `DENY`; fonts, `ntfy` and `echo` send `frame-ancestors 'none'` and `X-Frame-Options: DENY`, vault hosts send their own `frame-ancestors` instead, and SLICC's client document sends `'none'`. Every answer this worker makes carries a framing policy, except six's own answers passed through on www and WebSocket upgrades. The router never serves a manifest, because every key it builds has a `/` after the label.
 
@@ -147,7 +147,7 @@ The bucket's lifecycle rule `branch-releases` expires everything under `branches
 
 Seven shares `www.sliccy.ai` with SLICC 6 while six's users upgrade in place (ai-ecoverse/slicc-bios#648). The BIOS is `/7/` and its UI `/os/`; every other path stays six's.
 
-- **Routes:** `www.sliccy.ai/7*` and `www.sliccy.ai/os/*` in `wrangler.json`, more specific than tray-hub's `www.sliccy.ai/*`. The `*` after `7` is what catches `/7?<query>`, which a bare `www.sliccy.ai/7` route doesn't match. A www request that reaches this worker on another path (`/70`, say) goes to six through `V6`, unchanged.
+- **Routes:** `www.sliccy.ai/7*`, `www.sliccy.ai/os/*` and `www.sliccy.ai/oauth/client.json` in `wrangler.json`, more specific than tray-hub's `www.sliccy.ai/*`. The `*` after `7` is what catches `/7?<query>`, which a bare `www.sliccy.ai/7` route doesn't match. A www request that reaches this worker on another path (`/70`, say) goes to six through `V6`, unchanged.
 - **`/7`** answers 301 to `/7/`, keeping the query.
 - **`/7/<path>`** is R2's `seven/<path>`, exactly as `seven.sliccy.ai` serves it: `index.html` for directories, the ETag with 304 and 412, `no-store` on HTML documents, and `frame-ancestors 'self'` with `X-Frame-Options` on every answer, as are `/7`'s 301 and `/os/`'s 302 and 404. `/7/sw.js` also gets `Service-Worker-Allowed: /`, so the BIOS registers its service worker at scope `/` and the UI is `/os/`. After the upgrade, seven's service worker answers `/` too.
 - **The tray hub under `/7`:** `POST /7/tray`, `/7/controller/<token>` (WebSocket included), `/7/join/<token>`, `POST /7/api/tray/<trayId>/supersede` and the guest-seat routes are the tray routes above without the `/7`: cookies dropped both ways, a 3xx answered as 200 with `x-tray-status` and `x-tray-location`, and the same frame headers. Seven could reach the hub on www directly, but then it would send www's cookies and couldn't read the hub's redirects.
@@ -163,7 +163,7 @@ A `*.sliccy.ai` label is either a seven deployment (`seven`, or a published slic
 
 | Label | What it is |
 |---|---|
-| `www`, and the bare `sliccy.ai` | SLICC v6 and the tray hub (`slicc-tray-hub`); only seven's `/7` and `/os/` paths on www reach this worker |
+| `www`, and the bare `sliccy.ai` | SLICC v6 and the tray hub (`slicc-tray-hub`); only seven's `/7`, `/os/` and `/oauth/client.json` paths on www reach this worker |
 | `vault` | slicc-vault's production release |
 | `vault-preview` | slicc-vault's `main` release, as the preview vault for seven's previews |
 | `vault-<label>` | slicc-vault's branch previews (the prefix `vault-`) |

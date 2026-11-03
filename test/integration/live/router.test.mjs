@@ -78,6 +78,11 @@ test('serves seven at www.sliccy.ai/7/ next to six', { skip: onlyMain }, async (
   });
   assert.equal(ui.status, 302);
   assert.equal(ui.headers.get('location'), '/7/');
+  const client = await get('https://www.sliccy.ai/oauth/client.json');
+  assert.equal(client.headers.get('content-type'), 'application/json');
+  const document = await client.json();
+  assert.equal(document.client_id, 'https://www.sliccy.ai/oauth/client.json');
+  assert.deepEqual(document.redirect_uris, ['https://www.sliccy.ai/oauth/mcp-callback']);
   const six = await get('https://www.sliccy.ai/status');
   assert.equal((await six.json()).service, 'slicc-tray-hub');
 });

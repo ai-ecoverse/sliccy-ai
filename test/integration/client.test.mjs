@@ -54,6 +54,7 @@ const origins = [
   'https://seven.sliccy.ai',
   'https://feat-shell.sliccy.ai',
   'https://www.sliccy.ai/7',
+  'https://www.sliccy.ai',
 ];
 
 function assertServed(response) {
@@ -104,10 +105,18 @@ test('the document is the https one when the request came over http', async () =
   assert.equal(await response.text(), documentAt('https://seven.sliccy.ai'));
 });
 
-test('www/7 answers from the worker and never reaches six', async () => {
+test('www and www/7 answer from the worker and never reach six', async () => {
   upstream.length = 0;
   await (await get(`https://www.sliccy.ai/7${path}`)).arrayBuffer();
+  await (await get(`https://www.sliccy.ai${path}`)).arrayBuffer();
   assert.deepEqual(upstream, []);
+});
+
+test('www routes its root document to the worker', () => {
+  assert.ok(
+    config.routes.some(({ pattern }) => pattern === `www.sliccy.ai${path}`),
+    'www.sliccy.ai/oauth/client.json has a route of its own'
+  );
 });
 
 test('a label nobody published keeps its 404, and writes their 405', async () => {
@@ -154,13 +163,13 @@ test('service hosts keep their own answers', async () => {
 
 test('every other www path keeps its answer', async () => {
   upstream.length = 0;
-  for (const other of [path, `/70${path}`, `/status${path}`]) {
+  for (const other of [`${path}/`, `/70${path}`, `/status${path}`]) {
     const response = await get(`https://www.sliccy.ai${other}`);
     assert.equal(await response.text(), 'six', other);
     assert.equal(response.headers.get('content-security-policy'), null, other);
   }
   assert.deepEqual(upstream, [
-    `https://www.sliccy.ai${path}`,
+    `https://www.sliccy.ai${path}/`,
     `https://www.sliccy.ai/70${path}`,
     `https://www.sliccy.ai/status${path}`,
   ]);
