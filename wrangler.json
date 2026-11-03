@@ -9,7 +9,8 @@
   "routes": [
     { "pattern": "*.sliccy.ai/*", "zone_name": "sliccy.ai" },
     { "pattern": "www.sliccy.ai/7*", "zone_name": "sliccy.ai" },
-    { "pattern": "www.sliccy.ai/os/*", "zone_name": "sliccy.ai" }
+    { "pattern": "www.sliccy.ai/os/*", "zone_name": "sliccy.ai" },
+    { "pattern": "www.sliccy.ai/oauth/client.json", "zone_name": "sliccy.ai" }
   ],
   "r2_buckets": [{ "binding": "BIOS", "bucket_name": "slicc-bios" }],
   "version_metadata": { "binding": "VERSION" },
