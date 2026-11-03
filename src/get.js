@@ -18,6 +18,7 @@ export const TOOLS = {
   'slicc-capture': { repo: 'slicc-capture', about: 'slicc-capture, the sccapture command' },
   man: { repo: 'slicc-man', about: 'slicc-man, the scman command' },
   'slicc-audio': { repo: 'slicc-audio', about: 'slicc-audio: say, hear, afplay and chime' },
+  jsh: { repo: 'slicc-jsh', about: 'slicc-jsh, the host jsh command' },
 };
 
 const HEADERS = {
