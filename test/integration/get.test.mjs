@@ -73,6 +73,7 @@ test('every tool has a PowerShell answer, and HEAD has no body', async () => {
     'slicc-capture',
     'man',
     'slicc-audio',
+    'jsh',
     'playwright-cli',
     'curlwright',
   ]) {
@@ -95,6 +96,7 @@ test('the index lists the PowerShell one-liner next to each sh one-liner', async
     'slicc-capture',
     'man',
     'slicc-audio',
+    'jsh',
     'playwright-cli',
     'curlwright',
   ])
@@ -209,5 +211,21 @@ test('slicc-audio installs from its latest release, on sh and on Windows', async
   headers(windows);
   const script = await windows.text();
   assert.ok(script.includes(`Invoke-RestMethod '${ps1('slicc-audio')}'`));
+  assert.doesNotMatch(script, /-Only/);
+});
+
+test('jsh installs slicc-jsh from its latest release, on sh and on Windows', async () => {
+  const moved = await get('/jsh');
+  assert.equal(moved.status, 302);
+  assert.equal(
+    moved.headers.get('location'),
+    `${releases('slicc-jsh')}/latest/download/install.sh`
+  );
+  await moved.arrayBuffer();
+  const windows = await get('/jsh.ps1');
+  assert.equal(windows.status, 200);
+  headers(windows);
+  const script = await windows.text();
+  assert.ok(script.includes(`Invoke-RestMethod '${ps1('slicc-jsh')}'`));
   assert.doesNotMatch(script, /-Only/);
 });
