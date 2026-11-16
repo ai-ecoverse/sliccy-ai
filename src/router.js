@@ -1,4 +1,5 @@
 import { CLIENT_PATH, client } from './client.js';
+import { DOWNLOAD_PATH, download } from './download.js';
 import { echo } from './echo.js';
 import { bounded, framed, SELF_FRAMED, unframed } from './frames.js';
 import { get } from './get.js';
@@ -167,6 +168,7 @@ async function six(request, env) {
 }
 
 async function www(request, env, url) {
+  if (url.pathname === DOWNLOAD_PATH) return unframed(await download(request));
   if (url.pathname === CLIENT_PATH) return client(request, WWW);
   const bios = url.pathname.startsWith(`${BIOS_ON_WWW}/`);
   if (!bios && url.pathname !== BIOS_ON_WWW && !url.pathname.startsWith('/os/'))
