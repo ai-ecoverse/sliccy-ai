@@ -66,8 +66,9 @@ export function createDownload({ fetcher = fetch, now = Date.now, timeoutMs = 50
   let pending;
   async function latest() {
     if (cached && now() < cached.until) return cached.location;
-    if (!pending) {
-      pending = (async () => {
+    if (!pending || now() - pending.started >= timeoutMs) {
+      const current = { started: now() };
+      current.location = (async () => {
         const controller = new AbortController();
         let timer;
         let location = null;
@@ -86,13 +87,24 @@ export function createDownload({ fetcher = fetch, now = Date.now, timeoutMs = 50
         } finally {
           clearTimeout(timer);
         }
-        cached = { location, until: now() + CACHE_MS };
+        if (pending === current) cached = { location, until: now() + CACHE_MS };
         return location;
       })().finally(() => {
-        pending = null;
+        if (pending === current) pending = null;
       });
+      pending = current;
     }
-    return pending;
+    let deadline;
+    try {
+      return await Promise.race([
+        pending.location,
+        new Promise((resolve) => {
+          deadline = setTimeout(resolve, timeoutMs, null);
+        }),
+      ]);
+    } finally {
+      clearTimeout(deadline);
+    }
   }
   return async (request) => {
     const headers = {

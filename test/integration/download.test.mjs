@@ -274,3 +274,55 @@ test('upstream failures, malformed/oversized JSON, and slow headers/body fail cl
     assert.equal(signal.aborted, true);
   }
 });
+
+test('a lookup dropped with its cancelled request cannot stall later requests', async (t) => {
+  let hit;
+  const reached = new Promise((resolve) => {
+    hit = resolve;
+  });
+  let calls = 0;
+  const cancelling = new Miniflare({
+    ...options,
+    scriptPath: fileURLToPath(new URL('cancel.js', root)),
+    script: [
+      "import router from './src/router.js';",
+      'export default {',
+      '  fetch(request, env, ctx) {',
+      "    if (!request.headers.has('x-cancel')) return router.fetch(request, env, ctx);",
+      "    const cancelled = new Promise((resolve) => setTimeout(resolve, 100, new Response('cancelled')));",
+      '    return Promise.race([router.fetch(request, env, ctx), cancelled]);',
+      '  },',
+      '};',
+    ].join('\n'),
+    outboundService: async () => {
+      calls += 1;
+      if (calls > 1) return json();
+      hit();
+      return new Promise(() => {});
+    },
+  });
+  t.after(() => cancelling.dispose());
+  const first = await cancelling.dispatchFetch(DOWNLOAD_URL, {
+    redirect: 'manual',
+    headers: { 'x-cancel': '1' },
+  });
+  await reached;
+  assert.equal(await first.text(), 'cancelled');
+  const answer = () =>
+    Promise.race([
+      cancelling.dispatchFetch(DOWNLOAD_URL, { redirect: 'manual' }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('download stalled')), 10_000)),
+    ]);
+  const started = Date.now();
+  const second = await answer();
+  assert.ok(Date.now() - started < 7000);
+  assert.equal(second.status, 503);
+  assert.equal(second.headers.get('retry-after'), '60');
+  assert.equal(second.headers.get('cache-control'), 'no-store');
+  await second.arrayBuffer();
+  const third = await answer();
+  assert.equal(third.status, 302);
+  assert.equal(third.headers.get('location'), dmg());
+  await third.arrayBuffer();
+  assert.equal(calls, 2);
+});
