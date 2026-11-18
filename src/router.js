@@ -240,7 +240,7 @@ async function asset(request, env, url, vault, label) {
   if (root && url.pathname === '/embedders.json') {
     const body = JSON.stringify({ embedders: await embedders(env, vault) });
     return new Response(request.method === 'HEAD' ? null : body, {
-      headers: { ...extra, 'content-type': 'application/json', 'cache-control': 'no-cache' },
+      headers: { ...extra, 'content-type': 'application/json', 'cache-control': 'no-store' },
     });
   }
   const name = key(url, root, label);
