@@ -27,6 +27,7 @@ const files = {
   'seven/sw.js': 'self.addEventListener("fetch", () => {});',
   'seven/app.css': 'body{}',
   'seven/kernel.wasm': '\0asm',
+  'seven/config.json': '{}',
   'branches/feat-shell/index.html': '<!doctype html><title>branch</title>',
   'branches/feat-shell/bios.js': 'export {};',
   'branches/feat-shell.json': '{"branch":"feat/shell","files":["index.html"]}',
@@ -35,8 +36,10 @@ const files = {
   'vault/main/button.html': '<!doctype html><title>button</title>',
   'vault/main/auth/callback.html': '<!doctype html><title>callback</title>',
   'vault/main/vault.js': 'export {};',
+  'vault/main/config.json': '{}',
   'vault/branches/feat-x/index.html': '<!doctype html><title>vault branch</title>',
   'vault/branches/feat-x/vault.js': 'export {};',
+  'vault/branches/feat-x/config.json': '{}',
 };
 for (const [key, body] of Object.entries(files)) await bucket.put(key, body);
 
@@ -66,6 +69,7 @@ const assets = [
   ['https://seven.sliccy.ai/sw.js', 'text/javascript; charset=utf-8'],
   ['https://seven.sliccy.ai/app.css', 'text/css; charset=utf-8'],
   ['https://seven.sliccy.ai/kernel.wasm', 'application/wasm'],
+  ['https://seven.sliccy.ai/config.json', 'application/json'],
   ['https://feat-shell.sliccy.ai/bios.js', 'text/javascript; charset=utf-8'],
   ['https://www.sliccy.ai/7/bios.js', 'text/javascript; charset=utf-8'],
   ['https://www.sliccy.ai/7/sw.js', 'text/javascript; charset=utf-8'],
@@ -125,6 +129,27 @@ test('embedders.json is no-store on every vault host', async () => {
       assert.equal(response.headers.get('content-type'), 'application/json', `${method} ${url}`);
       assert.equal(response.headers.get('cache-control'), 'no-store', `${method} ${url}`);
     }
+  }
+});
+
+test('config.json is no-store on every vault host, with its ETag and 304', async () => {
+  for (const host of ['vault', 'vault-preview', 'vault-feat-x']) {
+    const url = `https://${host}.sliccy.ai/config.json`;
+    for (const method of ['GET', 'HEAD']) {
+      const response = await get(url, { method });
+      assert.equal(response.status, 200, `${method} ${url}`);
+      assert.equal(response.headers.get('content-type'), 'application/json', `${method} ${url}`);
+      assert.equal(response.headers.get('cache-control'), 'no-store', `${method} ${url}`);
+    }
+    const etag = (await get(url)).headers.get('etag');
+    assert.match(etag ?? '', /^"[0-9a-f]+"$/, url);
+    const cached = await get(url, { headers: { 'if-none-match': etag } });
+    assert.equal(cached.status, 304, url);
+    assert.equal(cached.headers.get('etag'), etag, url);
+    assert.equal(cached.headers.get('cache-control'), 'no-store', url);
+    const failed = await get(url, { headers: { 'if-match': '"other"' } });
+    assert.equal(failed.status, 412, url);
+    assert.equal(failed.headers.get('cache-control'), 'no-store', url);
   }
 });
 
