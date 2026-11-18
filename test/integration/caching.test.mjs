@@ -114,9 +114,18 @@ test('every other asset stays no-cache, with its ETag and 304', async () => {
     assert.equal(cached.headers.get('etag'), etag, url);
     assert.equal(cached.headers.get('cache-control'), 'no-cache', url);
   }
-  const embedders = await get('https://vault.sliccy.ai/embedders.json');
-  assert.equal(embedders.headers.get('content-type'), 'application/json');
-  assert.equal(embedders.headers.get('cache-control'), 'no-cache');
+});
+
+test('embedders.json is no-store on every vault host', async () => {
+  for (const host of ['vault', 'vault-preview', 'vault-feat-x']) {
+    for (const method of ['GET', 'HEAD']) {
+      const url = `https://${host}.sliccy.ai/embedders.json`;
+      const response = await get(url, { method });
+      assert.equal(response.status, 200, `${method} ${url}`);
+      assert.equal(response.headers.get('content-type'), 'application/json', `${method} ${url}`);
+      assert.equal(response.headers.get('cache-control'), 'no-store', `${method} ${url}`);
+    }
+  }
 });
 
 test('the other headers on an HTML document are unchanged', async () => {

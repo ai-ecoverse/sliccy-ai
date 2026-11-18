@@ -66,7 +66,7 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
   - **Transport and the rest:** `Strict-Transport-Security: max-age=31536000`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `Origin-Agent-Cluster: ?1`, so seven's script can't reach the vault's realm even when Chrome runs the same-site frame in seven's process.
 - **Caching:** as for seven, HTML documents (`index.html`, `popup.html`, `button.html`) are `no-store` and every other file is `no-cache`, each with its ETag.
 - **`GET /embedders.json`** answers `{ "embedders": [...] }`. It's the same list as `frame-ancestors`, from the same code, and the vault checks `event.origin` against it.
-  - **Caching:** `cache-control: no-cache` and the ETag, as for seven.
+  - **Caching:** `cache-control: no-store`.
   - **Cookies:** none set.
 - **Publishing:** slicc-vault publishes through the same `/api/publish/*` route (on any host but a vault host), with an OIDC token whose `repository` is `ai-ecoverse/slicc-vault`.
   - `main` publishes to `vault/main/` only from a push to `main` whose token's `environment` is `production`, i.e. from a job in slicc-vault's `production` environment. A pull request token with `head_ref` `main` is refused.
