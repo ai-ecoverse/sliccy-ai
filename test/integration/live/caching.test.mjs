@@ -27,6 +27,16 @@ test('embedders.json is no-store', async () => {
   }
 });
 
+test('config.json is no-store', async () => {
+  for (const url of [`${vault}config.json`, 'https://vault-preview.sliccy.ai/config.json']) {
+    for (const method of ['GET', 'HEAD']) {
+      const response = await get(url, { method });
+      assert.equal(response.status, 200, `${method} ${url}`);
+      assert.equal(response.headers.get('cache-control'), 'no-store', `${method} ${url}`);
+    }
+  }
+});
+
 test('scripts stay no-cache', async () => {
   const response = await get(`${seven}bios.js`);
   assert.equal(response.status, 200);
