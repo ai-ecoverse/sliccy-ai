@@ -30,6 +30,6 @@
     "playwright-core": "1.65.0",
     "semantic-release": "25.0.9",
     "wrangler": "4.161.0",
-    "ws": "8.22.2"
+    "ws": "8.23.0"
   }
 }
