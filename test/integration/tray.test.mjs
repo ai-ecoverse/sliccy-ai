@@ -145,6 +145,8 @@ for (const path of [
   '/api/tray/t1/biscotto',
   '/api/tray/t1/biscotto/stop',
   '/api/tray/t1/supersede',
+  '/api/tray/t1/preview',
+  '/api/tray/t1/preview/stop',
 ]) {
   test(`forwards POST ${path} to the hub`, async () => {
     const response = await worker.dispatchFetch(`https://seven.sliccy.ai${path}`, {
@@ -172,6 +174,14 @@ for (const path of [
   '/api/tray/t1/biscotto/../other',
   '/api/tray/t1/biscotto/%2e%2e/other',
   '/api/tray/t1/biscotto%2Fstop',
+  '/api/tray/t1/previews',
+  '/api/tray/t1/preview/x',
+  '/api/tray/t1/preview/stop/x',
+  '/api/tray/t1/previewx',
+  '/api/tray/t1/preview/%2e%2e/other',
+  '/api/tray/t1/preview%2Fstop',
+  '/api/tray/t1/preview/abc/file',
+  '/api/tray/t1/preview/abc/finalize',
 ]) {
   test(`does not forward POST ${path}`, async () => {
     const response = await worker.dispatchFetch(`https://seven.sliccy.ai${path}`, {
@@ -189,6 +199,38 @@ test('the guest-seat routes take POST only', async () => {
       body: '{}',
     });
     assert.equal(response.status, 405);
+  }
+});
+
+test('GET /api/tray/<trayId>/previews is forwarded with its bearer, and nothing else under it', async () => {
+  const response = await worker.dispatchFetch('https://seven.sliccy.ai/api/tray/t1/previews', {
+    headers: { authorization: 'Bearer controller', cookie: 'ambient=1' },
+  });
+  assert.equal(response.status, 201);
+  assert.deepEqual(await response.json(), {
+    url: 'https://www.sliccy.ai/api/tray/t1/previews',
+    method: 'GET',
+    cookie: null,
+    body: '',
+  });
+  const moved = await worker.dispatchFetch('https://www.sliccy.ai/7/api/tray/t1/previews');
+  assert.equal((await moved.json()).url, 'https://www.sliccy.ai/api/tray/t1/previews');
+  for (const path of [
+    '/api/tray/t1/preview',
+    '/api/tray/t1/preview/stop',
+    '/api/tray/t1/previews/x',
+  ]) {
+    const refused = await worker.dispatchFetch(`https://seven.sliccy.ai${path}`);
+    assert.equal(refused.status, 404, path);
+    await refused.body?.cancel();
+  }
+  for (const method of ['PUT', 'DELETE', 'PATCH', 'OPTIONS']) {
+    const refused = await worker.dispatchFetch('https://seven.sliccy.ai/api/tray/t1/previews', {
+      method,
+      body: '{}',
+    });
+    assert.equal(refused.status, 405, method);
+    await refused.body?.cancel();
   }
 });
 
