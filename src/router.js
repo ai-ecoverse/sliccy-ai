@@ -130,9 +130,12 @@ async function fonts(url, request, env) {
 }
 
 const TRAY = /^\/(tray|controller\/[^/]+|join\/[^/]+|api\/tray\/[^/]+\/supersede)$/;
-const SEAT = /^\/api\/tray\/[^/]+\/biscotto(\/stop)?$/;
+const POSTED = /^\/api\/tray\/[^/]+\/(biscotto|preview)(\/stop)?$/;
+const LISTED = /^\/api\/tray\/[^/]+\/previews$/;
 const proxied = (url, request) =>
-  TRAY.test(url.pathname) || (request.method === 'POST' && SEAT.test(url.pathname));
+  TRAY.test(url.pathname) ||
+  (request.method === 'POST' && POSTED.test(url.pathname)) ||
+  (request.method === 'GET' && LISTED.test(url.pathname));
 const readable = (request) => request.method === 'GET' || request.method === 'HEAD';
 
 async function tray(url, request, env) {
