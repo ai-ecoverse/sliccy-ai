@@ -181,7 +181,9 @@ for (const path of [
   '/api/tray/t1/preview/%2e%2e/other',
   '/api/tray/t1/preview%2Fstop',
   '/api/tray/t1/preview/abc/file',
-  '/api/tray/t1/preview/abc/finalize',
+  '/api/tray/t1/preview/abc/finalize/x',
+  '/api/tray/t1/preview/a/b/finalize',
+  '/api/tray/t1/preview//finalize',
 ]) {
   test(`does not forward POST ${path}`, async () => {
     const response = await worker.dispatchFetch(`https://seven.sliccy.ai${path}`, {
@@ -230,6 +232,42 @@ test('GET /api/tray/<trayId>/previews is forwarded with its bearer, and nothing 
       body: '{}',
     });
     assert.equal(refused.status, 405, method);
+    await refused.body?.cancel();
+  }
+});
+
+test('a snapshot upload is forwarded as PUT …/preview/<token>/file with its query and body, and finalize as POST', async () => {
+  const body = new Uint8Array(70000).fill(7);
+  const put = await worker.dispatchFetch(
+    'https://seven.sliccy.ai/api/tray/t1/preview/t1.p/file?path=img%2Fa.png',
+    { method: 'PUT', headers: { authorization: 'Bearer upload', cookie: 'ambient=1' }, body }
+  );
+  assert.equal(put.status, 201);
+  const echoed = await put.json();
+  assert.deepEqual(
+    [echoed.url, echoed.method, echoed.cookie, echoed.body.length],
+    ['https://www.sliccy.ai/api/tray/t1/preview/t1.p/file?path=img%2Fa.png', 'PUT', null, 70000]
+  );
+  const done = await worker.dispatchFetch(
+    'https://www.sliccy.ai/7/api/tray/t1/preview/t1.p/finalize',
+    {
+      method: 'POST',
+      body: '{}',
+    }
+  );
+  assert.equal((await done.json()).url, 'https://www.sliccy.ai/api/tray/t1/preview/t1.p/finalize');
+  for (const [method, path] of [
+    ['POST', '/api/tray/t1/preview/t1.p/file'],
+    ['GET', '/api/tray/t1/preview/t1.p/file'],
+    ['PUT', '/api/tray/t1/preview/t1.p/finalize'],
+    ['GET', '/api/tray/t1/preview/t1.p/finalize'],
+    ['PUT', '/api/tray/t1/preview/t1.p/file/x'],
+  ]) {
+    const refused = await worker.dispatchFetch(`https://seven.sliccy.ai${path}`, {
+      method,
+      body: method === 'GET' ? undefined : '{}',
+    });
+    assert.ok([404, 405].includes(refused.status), `${method} ${path}: ${refused.status}`);
     await refused.body?.cancel();
   }
 });
