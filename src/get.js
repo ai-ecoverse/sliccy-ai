@@ -19,6 +19,7 @@ export const TOOLS = {
   man: { repo: 'slicc-man', about: 'slicc-man, the scman command' },
   'slicc-audio': { repo: 'slicc-audio', about: 'slicc-audio: say, hear, afplay and chime' },
   jsh: { repo: 'slicc-jsh', about: 'slicc-jsh, the host jsh command' },
+  serve: { repo: 'slicc-serve', about: 'slicc-serve, the scserve command' },
 };
 
 const HEADERS = {
