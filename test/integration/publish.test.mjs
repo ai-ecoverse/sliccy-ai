@@ -45,7 +45,10 @@ const claims = (ref) => ({
 const outbound = [];
 const worker = new Miniflare({
   modules: true,
-  modulesRules: [{ type: 'ESModule', include: ['**/*.js'] }],
+  modulesRules: [
+    { type: 'Text', include: ['**/cherry/dist/preview-bridge.js'] },
+    { type: 'ESModule', include: ['**/*.js'] },
+  ],
   scriptPath: fileURLToPath(new URL(config.main, root)),
   compatibilityDate: config.compatibility_date,
   r2Buckets: [binding],

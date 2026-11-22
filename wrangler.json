@@ -13,9 +13,16 @@
     { "pattern": "www.sliccy.ai/oauth/client.json", "zone_name": "sliccy.ai" },
     { "pattern": "www.sliccy.ai/download/sliccy.dmg*", "zone_name": "sliccy.ai" }
   ],
-  "r2_buckets": [{ "binding": "BIOS", "bucket_name": "slicc-bios" }],
+  "r2_buckets": [
+    { "binding": "BIOS", "bucket_name": "slicc-bios" },
+    { "binding": "SERVE_STORAGE", "bucket_name": "sliccy-now-basic-storage" }
+  ],
   "version_metadata": { "binding": "VERSION" },
-  "services": [{ "binding": "V6", "service": "slicc-tray-hub" }],
+  "services": [
+    { "binding": "V6", "service": "slicc-tray-hub" },
+    { "binding": "V6_PREVIEW", "service": "slicc-preview" }
+  ],
+  "rules": [{ "type": "Text", "globs": ["**/cherry/dist/preview-bridge.js"], "fallthrough": true }],
   "durable_objects": {
     "bindings": [
       { "name": "HOMES", "class_name": "NtfyHome" },

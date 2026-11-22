@@ -29,7 +29,10 @@ const start = (ratelimits) =>
       {
         name: 'sliccy-ai',
         modules: true,
-        modulesRules: [{ type: 'ESModule', include: ['**/*.js'] }],
+        modulesRules: [
+          { type: 'Text', include: ['**/cherry/dist/preview-bridge.js'] },
+          { type: 'ESModule', include: ['**/*.js'] },
+        ],
         scriptPath: fileURLToPath(new URL(config.main, root)),
         compatibilityDate: config.compatibility_date,
         r2Buckets: [config.r2_buckets[0].binding],
