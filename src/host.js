@@ -99,6 +99,10 @@ export function snapshotPath(entry) {
   return path === '' || path.endsWith('/') ? `${path}index.html` : path;
 }
 
+export function entryFile(entry) {
+  return filePath(snapshotPath(entry.split(/[?#]/)[0]));
+}
+
 export function filePath(encoded) {
   let segments;
   try {
@@ -277,8 +281,7 @@ export class ServeHost {
     if (snapshot && (!Number.isSafeInteger(ttlMs) || ttlMs <= 0 || ttlMs > this.limits.ttl))
       return fail(400, 'INVALID_TTL', 'ttlMs must be a positive duration of at most 30 days');
     if (snapshot && bridge) return fail(400, 'INVALID_BODY', 'a snapshot cannot be bridged');
-    if (snapshot && !filePath(snapshotPath(entry)))
-      return fail(400, 'INVALID_ENTRY', 'invalid entry');
+    if (snapshot && !entryFile(entry)) return fail(400, 'INVALID_ENTRY', 'invalid entry');
     const token = `${hostId}-${hex(16)}`;
     this.sql.exec(
       `INSERT INTO previews (token, mode, state, entry, tag, bridge, max_tabs, quiet, announced,
@@ -401,7 +404,7 @@ export class ServeHost {
     if (row.mode !== 'snapshot') return fail(404, 'PREVIEW_NOT_FOUND', 'not a snapshot');
     if (row.state !== 'uploading')
       return fail(409, 'SNAPSHOT_FINALIZED', 'the snapshot is finalized');
-    const entry = snapshotPath(row.entry);
+    const entry = entryFile(row.entry);
     if (!this.one('SELECT 1 FROM files WHERE token = ? AND path = ?', row.token, entry))
       return fail(400, 'ENTRY_MISSING', `the entry file ${entry} was not uploaded`);
     this.sql.exec(

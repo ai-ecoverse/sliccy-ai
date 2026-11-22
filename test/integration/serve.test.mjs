@@ -522,6 +522,36 @@ test('bounds the files of a snapshot', async () => {
   assert.match((await early.json()).error, /docs\/index\.html/);
 });
 
+test('finalizes and serves entries whose names need percent-encoding, or carry a query', async () => {
+  const { call, mint } = await host();
+  for (const [name, encoded, entry, query] of [
+    ['a b.html', 'a%20b.html', '/a%20b.html', ''],
+    ['ü.css', '%C3%BC.css', '/%C3%BC.css', ''],
+    ['x%y.js', 'x%25y.js', '/x%25y.js', ''],
+    ['index.html', 'index.html', '/index.html?theme=dark', '?theme=dark'],
+    ['index.html', 'index.html', '/?theme=dark#top', '?theme=dark#top'],
+    ['d i/index.html', 'd%20i/index.html', '/d%20i/?q=1', '?q=1'],
+  ]) {
+    const snapshot = await mint({ ttlMs: 60_000, entry });
+    const body = `file ${name}`;
+    const put = await call(`/previews/${snapshot.previewToken}/files/${encoded}`, {
+      method: 'PUT',
+      headers: { 'content-length': String(Buffer.byteLength(body)), 'content-type': 'text/plain' },
+      body,
+    });
+    assert.deepEqual(await put.json(), { path: name, size: Buffer.byteLength(body) }, entry);
+    const done = await call(`/previews/${snapshot.previewToken}/finalize`, { method: 'POST' });
+    assert.equal(done.status, 200, `${entry}: ${JSON.stringify(await done.clone().json())}`);
+    const ready = await done.json();
+    assert.equal(ready.url, `https://${snapshot.previewToken}.sliccy.now${entry}`);
+    const served = await worker.dispatchFetch(ready.url);
+    assert.equal(served.status, 200, ready.url);
+    assert.equal(await served.text(), body, ready.url);
+    const path = entry.slice(0, entry.length - query.length);
+    assert.equal(await (await visit(snapshot, path)).text(), body, path);
+  }
+});
+
 test('deletes snapshots when they expire, and unfinished ones after the upload window', async () => {
   const { call, mint } = await host();
   const expiring = await mint({ ttlMs: 1200 });
