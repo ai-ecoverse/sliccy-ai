@@ -19,11 +19,17 @@ function summary(line) {
 function wrangler(args) {
   const dir = mkdtempSync(join(tmpdir(), 'wrangler-'));
   const file = join(dir, 'output.ndjson');
-  const stdout = execFileSync(bin, args, {
+  const run = spawnSync(bin, args, {
     encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit'],
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 64 * 1024 * 1024,
     env: { ...env, CLOUDFLARE_API_TOKEN: token, WRANGLER_OUTPUT_FILE_PATH: file },
   });
+  process.stderr.write(run.stderr ?? '');
+  if (run.status !== 0)
+    throw Object.assign(new Error(`Command failed: ${bin} ${args.join(' ')}`), {
+      stderr: run.stderr ?? '',
+    });
   let entries = [];
   try {
     entries = readFileSync(file, 'utf8')
@@ -33,7 +39,7 @@ function wrangler(args) {
   } catch {
     entries = [];
   }
-  return { stdout, entries };
+  return { stdout: run.stdout, entries };
 }
 
 function output(entries, type, key) {
@@ -47,6 +53,7 @@ const stableOf = (deployment) =>
   deployment.versions.reduce((a, b) => (b.percentage > a.percentage ? b : a)).version_id;
 const message = (deployment) => deployment.annotations?.['workers/message'] ?? '';
 const tests = 'post-deploy tests for ';
+const MIGRATION = /pending Durable Object migration/;
 const prefix = `${tests}${env.GITHUB_REF_NAME ?? 'local'} `;
 const branchWrite = (deployment) => message(deployment).startsWith(tests);
 const authority = (list) => list.findLast((deployment) => !branchWrite(deployment));
@@ -230,14 +237,23 @@ function takeOut(version, plan) {
 async function branch() {
   await quiet();
   const plan = decide(deployments());
-  const { entries } = wrangler([
-    'versions',
-    'upload',
-    '--tag',
-    label.split(' ').at(-1),
-    '--message',
-    label,
-  ]);
+  let entries;
+  try {
+    ({ entries } = wrangler([
+      'versions',
+      'upload',
+      '--tag',
+      label.split(' ').at(-1),
+      '--message',
+      label,
+    ]));
+  } catch (error) {
+    if (!MIGRATION.test(error.stderr)) throw error;
+    summary(
+      '::notice title=Deploy::this pull request adds a Durable Object migration, which `wrangler versions upload` cannot apply; no branch version and no post-deploy tests until the release deploys it'
+    );
+    return 0;
+  }
   const version = output(entries, 'version-upload', 'version_id');
   await quiet();
   let status = 1;

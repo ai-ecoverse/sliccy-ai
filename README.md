@@ -347,6 +347,7 @@ CI is one caller workflow, [`ci.yml`](.github/workflows/ci.yml), that runs [slic
   - after each switch, and after a release's post-deploy tests, if the latest deployment is a branch job's with another version at 100%, that version is put back, keeping any 0% versions, and a `::warning::` names both deployments; for a release, a rollback by hand that lands any time after the release's own deployment is what's put back, not the release;
   - a version left at 0% by a cancelled run of the same pull request doesn't hold up the next one, and one left by another pull request is replaced, with a warning, after 10 minutes in all;
   - a pull request from a fork gets no token, so it skips the deploy with a notice; one from this repository without the token fails.
+  - a pull request that adds a Durable Object migration can't be uploaded as a version (`wrangler versions upload` refuses a pending migration), so it skips the deploy with a notice, and its tests and reviews run as usual; the release applies the migration with `wrangler deploy` and runs the post-deploy tests then. Any other upload error still fails the job.
 
 The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`npm run test:live`) send `Cloudflare-Workers-Version-Overrides: sliccy-ai="<version>"` on every request to `*.sliccy.ai`, so they reach the version under test, and they wait until `x-sliccy-ai-version` names it. They check:
 - serving `seven`;

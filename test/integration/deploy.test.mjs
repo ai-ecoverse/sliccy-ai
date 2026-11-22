@@ -33,6 +33,10 @@ if (command === 'deployments') {
   const late = state.inject?.shift();
   if (late) state.deployments.push(late);
 } else if (command === 'versions' && sub === 'upload') {
+  if (state.migration) {
+    process.stderr.write(state.migration + '\\n');
+    process.exit(1);
+  }
   const id = 'branch-' + state.versions.length;
   state.versions.push({ id, annotations: { 'workers/tag': flag('--tag') } });
   out({ type: 'version-upload', version_id: id });
@@ -314,6 +318,27 @@ test('a pull request from a fork skips the deploy, and one from this repository 
   assert.match(forked.result.stdout, /fork gets no deploy token/);
   assert.equal(forked.deployments.length, 10);
   assert.equal(from('ai-ecoverse/sliccy-ai').result.status, 1);
+});
+
+test('a pull request that adds a Durable Object migration skips the deploy with a notice', () => {
+  const fixture = setup({ tags: ['v1.9.0', 'v1.10.0'], versions: released });
+  const state = JSON.parse(readFileSync(fixture.state, 'utf8'));
+  state.migration =
+    'This Worker has a pending Durable Object migration, which cannot be applied by `wrangler versions upload`.';
+  writeFileSync(fixture.state, JSON.stringify(state));
+  const { result, deployments } = run(fixture);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(deployments, state.deployments);
+  assert.match(
+    result.stdout,
+    /::notice title=Deploy::this pull request adds a Durable Object migration/
+  );
+  assert.match(result.stderr, /pending Durable Object migration/);
+  state.migration = 'Authentication error';
+  writeFileSync(fixture.state, JSON.stringify(state));
+  const failed = run(fixture);
+  assert.equal(failed.result.status, 1);
+  assert.match(failed.result.stdout, /::error title=Deploy::Command failed: .* versions upload/);
 });
 
 test('a re-run release deploys the version it already uploaded, so its tag stays unique', () => {
