@@ -8,7 +8,9 @@ import { Miniflare } from 'miniflare';
 
 const root = new URL('../../', import.meta.url);
 const config = JSON.parse(readFileSync(new URL('wrangler.json', root)));
-const [homes, trays] = config.durable_objects.bindings;
+const binding = (name) => config.durable_objects.bindings.find((entry) => entry.name === name);
+const homes = binding('HOMES');
+const trays = binding('TRAY_HUB');
 
 const hub = `export class ${trays.class_name} {
   async fetch(request) {

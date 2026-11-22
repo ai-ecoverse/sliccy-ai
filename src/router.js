@@ -8,6 +8,7 @@ import { ntfy } from './ntfy.js';
 import { publish } from './publish.js';
 
 export { NtfyHome } from './home.js';
+export { ServeHost } from './host.js';
 
 const types = {
   css: 'text/css; charset=utf-8',
