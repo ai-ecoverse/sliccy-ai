@@ -6,6 +6,7 @@ import { get } from './get.js';
 import { mcpcat } from './mcpcat.js';
 import { ntfy } from './ntfy.js';
 import { publish } from './publish.js';
+import { api, hubHost, onNow, visit } from './serve.js';
 
 export { NtfyHome } from './home.js';
 export { ServeHost } from './host.js';
@@ -197,6 +198,7 @@ async function sevenOnWww(request, env, url, inner) {
       : new Response('not found', { status: 404 });
   }
   if (inner.pathname === CLIENT_PATH) return client(request, `${WWW}${BIOS_ON_WWW}`);
+  if (inner.pathname.startsWith('/api/serve/')) return api(request, env, inner.pathname);
   if (!readable(request)) {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
   }
@@ -208,6 +210,7 @@ async function sevenOnWww(request, env, url, inner) {
 async function serve(request, env) {
   const url = new URL(request.url);
   if (url.origin === WWW) return www(request, env, url);
+  if (onNow(url)) return visit(request, env, hubHost(url));
   if (url.hostname.split('.')[0] === 'mcpcat') return mcpcat(request, url);
   if (url.hostname.split('.')[0] === 'get') return get(request, url);
   if (url.hostname.split('.')[0] === 'echo') return unframed(echo(request, url));
@@ -228,6 +231,7 @@ async function published(env, url) {
 
 async function seven(request, env, url) {
   if (url.pathname.startsWith('/api/publish/')) return publish(request, env);
+  if (url.pathname.startsWith('/api/serve/')) return api(request, env, url.pathname);
   if (url.pathname === CLIENT_PATH && (await published(env, url)))
     return client(request, `https://${url.hostname}`);
   if (!readable(request)) {
@@ -270,6 +274,8 @@ async function asset(request, env, url, vault, label) {
 
 export default {
   async fetch(request, env) {
+    const url = new URL(request.url);
+    if (onNow(url) && !hubHost(url)) return env.V6_PREVIEW.fetch(request);
     const response = await serve(request, env);
     if (response.status === 101) return response;
     response.headers.set('x-sliccy-ai-version', env.VERSION.id);

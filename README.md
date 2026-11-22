@@ -197,7 +197,7 @@ A label nobody published answers 404 through the wildcard record; there's no pag
 
 ## Previews on sliccy.now (the serve hub)
 
-`serve` in seven and slicc-serve's `scserve` publish a directory or a local server at a public `https://<label>.sliccy.now/` URL. This worker is their hub ([#167](https://github.com/ai-ecoverse/sliccy-ai/issues/167)): it takes the `*.sliccy.now/*` route over from SLICC 6's `slicc-preview` worker, relays every visitor's full HTTP request to the publisher's socket, and serves `--ttl` snapshots from R2. Six's own previews keep working on six's hub: every label in six's formats goes on to `slicc-preview` unchanged. There are no limits on who publishes or how much (no sign-in, no quotas); the bounds below protect the hub and the visitor, not a budget. The code is in `src/serve.js` (the API and `*.sliccy.now`) and `src/host.js` (the Durable Object).
+`serve` in seven and slicc-serve's `scserve` publish a directory or a local server at a public `https://<label>.sliccy.now/` URL. This worker is their hub ([#167](https://github.com/ai-ecoverse/sliccy-ai/issues/167)): it takes the `*.sliccy.now/*` route over from SLICC 6's `slicc-preview` worker, relays every visitor's full HTTP request to the publisher's socket, and serves `--ttl` snapshots from R2. Six's own previews keep working on six's hub: every label in six's formats goes on to `slicc-preview` unchanged. There are no limits on who publishes or how much (no sign-in, no quotas); the bounds below protect the hub and the visitor, not a budget. The code is in [`src/serve.js`](src/serve.js) (the API's and `*.sliccy.now`'s edge), [`src/host.js`](src/host.js) (the Durable Object) and [`src/relay.js`](src/relay.js) (headers, frames and the bridge's injection).
 
 ### Publishers
 
@@ -263,7 +263,7 @@ The publisher holds one WebSocket to the hub, `GET /api/serve/host/<hostId>/ws`,
 - **`url`** is the visitor's full URL (`https://<label>.sliccy.now/a/b?x=1`) and **`path`** its path and query exactly as they came, still percent-encoded; the publisher sends `path` to its origin. **`headers`** is a list of `[name, value]` pairs with lowercase names, in the visitor's order, repeats kept; `body` says whether a request body follows. The request is the visitor's, every method, with the headers below. `Range`, conditional requests and `Cookie` reach the origin as the visitor sent them, so the origin answers 206, 304 and 416 itself.
 - **`status`** is 200 to 599 (no 1xx); `headers` the same shape, so several `Set-Cookie` lines survive. `body` is `false` for `HEAD`, 204 and 304, and the hub ignores any body frames then.
 - **Flow control:** a sender has at most 1 MiB of a stream's body unacknowledged at a time, and the receiver acknowledges bytes once it has passed them on (the hub, as the visitor reads the response; the publisher, as its origin reads the request body), so neither side buffers more than that per stream, however large or long a body is.
-- **Cancelling:** the hub sends `http.cancel` when the visitor goes away or a bound below is hit, and the publisher when its origin fails. A cancel before `http.response` is the visitor's 502; after, the visitor's body ends in an error.
+- **Cancelling:** the hub sends `http.cancel` when the visitor goes away or a bound below is hit, and the publisher when its origin fails. A cancel before `http.response` is the visitor's 502 (504 for the timeouts, 413 for a request body over the limit, with the reason as its text); after, the visitor's body ends in an error.
 - **Bounds:**
   - a request body is at most 100 MiB (`Content-Length` larger is 413 before anything is sent; a body that runs past it is cancelled);
   - a response body has no length limit, as long as it keeps moving: a live stream (server-sent events, a long download) runs as long as the visitor reads it;
@@ -319,7 +319,7 @@ npm test
 npm run lint
 ```
 
-`npm test` runs the router in workerd through [Miniflare](https://github.com/cloudflare/workers-sdk/tree/main/packages/miniflare) against a local R2 bucket, using `wrangler.json` for the compatibility date and bindings. The ntfy tests run the `NtfyHome` Durable Object and a stand-in `slicc-tray-hub` that exports a `SessionTrayDurableObject`, reached through the same cross-script binding as in production.
+`npm test` runs the router in workerd through [Miniflare](https://github.com/cloudflare/workers-sdk/tree/main/packages/miniflare) against a local R2 bucket, using `wrangler.json` for the compatibility date and bindings. The serve hub's tests (`serve.test.mjs`) run the `ServeHost` Durable Object with a fake publisher ([`publisher.mjs`](test/integration/publisher.mjs)) that speaks the socket protocol, flow control included, and a stand-in `slicc-preview` behind `V6_PREVIEW`; `SERVE_LIMITS` (a JSON object, unset in production) shortens the hub's timeouts and bounds for them. The ntfy tests run the `NtfyHome` Durable Object and a stand-in `slicc-tray-hub` that exports a `SessionTrayDurableObject`, reached through the same cross-script binding as in production.
 
 `deploy.test.mjs` runs [`scripts/deploy.mjs`](scripts/deploy.mjs) against a stand-in wrangler and a fixture git repository with release tags, so the pull request deploy's choice of the stable version is tested without Cloudflare.
 
@@ -358,6 +358,7 @@ The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`np
 - that the publish route refuses no token, refuses this repository's own real OIDC token (`not from ai-ecoverse/slicc-bios`, so GitHub's keys and the signature check are exercised), and refuses a tampered one (both deploying jobs have `id-token: write`);
 - that a follower attaches to a tray through `seven.sliccy.ai` (`role: follower`, waiting for a leader);
 - that a tray created through `seven.sliccy.ai` gets `www.sliccy.ai` capability URLs and its leader WebSocket connects through `seven.sliccy.ai`;
+- that the serve hub's API answers on `seven.sliccy.ai`, and after a release only, that a publisher creates a host, holds its socket (with the secret as a subprotocol), mints, uploads, finalizes, lists and stops previews, and deletes the host;
 - that `ntfy.sliccy.ai` answers its health probe and refuses a topic without a token;
 - after a release only, that a tray created through `seven.sliccy.ai` claims an ntfy home with its controller token (and a forged token is refused), and a signed GitHub webhook over 48 KiB reaches a subscriber as a verified message with an attachment. A branch version at 0% can't run this one: each Durable Object runs the version the deployment split assigns it, whatever the override header says, so every home still runs the stable version;
 - that Chromium boots <https://seven.sliccy.ai/> into `bash` in the terminal, cross-origin isolated;
