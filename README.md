@@ -100,6 +100,8 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 - Only GET and HEAD are answered.
 - A slicc-bios branch named `get` can't publish.
 
+**Previews:** `*.sliccy.now` and the serve hub's API `/api/serve/*` are described in [Previews on sliccy.now](#previews-on-sliccynow-the-serve-hub).
+
 **A WebSocket echo for tests:** `wss://echo.sliccy.ai/` sends every message back, text and binary. Seven's integration tests use it as a public `wss://` target that SLICC controls, with Cloudflare's real certificate, so a client's certificate-chain check is tested without depending on a third party. The code is in [`src/echo.js`](src/echo.js).
 - **Subprotocols:** the first one offered is accepted.
 - **Limits:**
@@ -143,7 +145,7 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 
 `www.sliccy.ai/*` and `sliccy.ai/*` have more specific routes to `slicc-tray-hub` (SLICC v6), and `*.` doesn't match the bare domain. Seven's paths on www (`/7`, `/7/*`, `/os/*` and `/oauth/client.json`) and the Sliccy DMG download have routes of their own here, more specific still (see below). A proxied wildcard record `AAAA *.sliccy.ai 100::` makes every other subdomain resolve.
 
-The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. Every answer this worker makes for `seven` and the branch previews, whatever its status or type (404s, 405s, 304s, 412s, publish errors, scripts), sends `Content-Security-Policy: frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`, so no other site can frame seven. The tray routes add `frame-ancestors 'self'` as a policy of their own next to six's `Content-Security-Policy`, and `X-Frame-Options: SAMEORIGIN` unless six sent `DENY`; fonts, `ntfy` and `echo` send `frame-ancestors 'none'` and `X-Frame-Options: DENY`, vault hosts send their own `frame-ancestors` instead, and SLICC's client document sends `'none'`. Every answer this worker makes carries a framing policy, except six's own answers passed through on www and WebSocket upgrades. The router never serves a manifest, because every key it builds has a `/` after the label.
+The worker only reads. slicc-bios's `edge/publish.mjs` writes `main` to `seven/` and every other branch to `branches/<label>/`, each with a manifest next to it (`seven.json`, `branches/<label>.json`) that records the owning branch. Every answer this worker makes for `seven` and the branch previews, whatever its status or type (404s, 405s, 304s, 412s, publish errors, scripts), sends `Content-Security-Policy: frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`, so no other site can frame seven. The tray routes add `frame-ancestors 'self'` as a policy of their own next to six's `Content-Security-Policy`, and `X-Frame-Options: SAMEORIGIN` unless six sent `DENY`; fonts, `ntfy` and `echo` send `frame-ancestors 'none'` and `X-Frame-Options: DENY`, vault hosts send their own `frame-ancestors` instead, and SLICC's client document sends `'none'`. Every answer this worker makes carries a framing policy, except six's own answers passed through on www and on `*.sliccy.now`, a live preview's answers (the origin's own headers stand), and WebSocket upgrades. The router never serves a manifest, because every key it builds has a `/` after the label.
 
 The bucket's lifecycle rule `branch-releases` expires everything under `branches/` 30 days after it was uploaded. Every push to a branch uploads all of its files again, so active branches stay up, and nobody has to clean up after deleted ones. `seven/` never expires.
 
@@ -166,7 +168,7 @@ Seven shares `www.sliccy.ai` with SLICC 6 while six's users upgrade in place (ai
 - **`/7/<path>`** is R2's `seven/<path>`, exactly as `seven.sliccy.ai` serves it: `index.html` for directories, the ETag with 304 and 412, `no-store` on HTML documents, and `frame-ancestors 'self'` with `X-Frame-Options` on every answer, as are `/7`'s 301 and `/os/`'s 302 and 404. `/7/sw.js` also gets `Service-Worker-Allowed: /`, so the BIOS registers its service worker at scope `/` and the UI is `/os/`. After the upgrade, seven's service worker answers `/` too.
 - **The tray hub under `/7`:** `POST /7/tray`, `/7/controller/<token>` (WebSocket included), `/7/join/<token>`, `POST /7/api/tray/<trayId>/supersede` and the guest-seat routes are the tray routes above without the `/7`: cookies dropped both ways, a 3xx answered as 200 with `x-tray-status` and `x-tray-location`, and the same frame headers. Seven could reach the hub on www directly, but then it would send www's cookies and couldn't read the hub's redirects.
 - **`/os/*`** is answered from OPFS by seven's service worker. A navigation that reaches the network instead (`Sec-Fetch-Mode: navigate` or `Sec-Fetch-Dest: document`: a first visit, a cleared site, a hard reload) gets a 302 to `/7/`, so it goes through the BIOS; anything else there is a 404. Without this route, tray-hub's single-page fallback would answer `/os/` with six's `index.html`.
-- **Nothing is written on www:** `/7/` answers only GET and HEAD outside the tray routes, so `/7/api/publish/*` is a 404 (405 for writes).
+- **Nothing is written on www:** `/7/` answers only GET and HEAD outside the tray routes and the serve hub's `/7/api/serve/*` (see [Previews on sliccy.now](#previews-on-sliccynow-the-serve-hub)), so `/7/api/publish/*` is a 404 (405 for writes).
 - **The vault:** production seven runs on www too, so the production vault lets it embed (see the vault above). In a browser that hasn't upgraded yet, six's `/preview/` service worker serves agent-written HTML unsandboxed on www, and that HTML could frame the production vault. The vault's storage there is partitioned under www, though, and stays empty until seven runs in that browser, and the upgrade unregisters six's `/preview/` before seven stores anything (ai-ecoverse/slicc#4051).
 - **Fonts** on www stay tray-hub's own `/fonts/*`, same-origin for seven there.
 - **Later:** when `www.sliccy.ai/` serves the BIOS, `/7/` keeps working, because bookmarks and the service worker's script URL `/7/sw.js` must not move.
@@ -192,6 +194,122 @@ A label nobody published answers 404 through the wildcard record; there's no pag
 1. route it in `src/router.js`, before the seven routes;
 2. reserve its label (or prefix) in `src/publish.js`, so no slicc-bios branch can publish to it;
 3. add it to [slicc-browsers](https://github.com/ai-ecoverse/slicc-browsers)' catalog (`seven.excludedLabels`, or the prefix list), so slicc-cli doesn't take it for seven when it sets up CDP or pairs over loopback.
+
+## Previews on sliccy.now (the serve hub)
+
+`serve` in seven and slicc-serve's `scserve` publish a directory or a local server at a public `https://<label>.sliccy.now/` URL. This worker is their hub ([#167](https://github.com/ai-ecoverse/sliccy-ai/issues/167)): it takes the `*.sliccy.now/*` route over from SLICC 6's `slicc-preview` worker, relays every visitor's full HTTP request to the publisher's socket, and serves `--ttl` snapshots from R2. Six's own previews keep working on six's hub: every label in six's formats goes on to `slicc-preview` unchanged. There are no limits on who publishes or how much (no sign-in, no quotas); the bounds below protect the hub and the visitor, not a budget. The code is in `src/serve.js` (the API and `*.sliccy.now`) and `src/host.js` (the Durable Object).
+
+### Publishers
+
+A **publisher** is one `ServeHost` Durable Object (SQLite storage), named by a `hostId` of 20 lowercase hex digits. Seven's page and each machine running `scserve` keep their own host; neither needs a tray.
+
+- **Creating one:** `POST /api/serve/host` (no body, no credentials) answers 201 `{ hostId, secret }`. The secret is 64 hex digits and is shown only here; the host keeps its SHA-256.
+- **Credentials:** every other call names the host in its path and carries `Authorization: Bearer <secret>`. A missing or wrong secret is 401 (`UNAUTHORIZED`, with `WWW-Authenticate: Bearer`); a host nobody created is 404 (`HOST_NOT_FOUND`) and a deleted one 410 (`HOST_GONE`), so a client that gets either creates a new host and tries again once.
+- **Where:** the API is answered on `seven.sliccy.ai` and every branch host (`/api/serve/…`), and on `www.sliccy.ai/7/api/serve/…`, so seven's page reaches it on its own origin without CORS, wherever it runs. It's one hub: a host made through one origin works through all of them. `scserve` uses `https://seven.sliccy.ai` (overridable for tests and staging). No cookies are read or set, and there are no CORS headers.
+- **Deleting one:** `DELETE /api/serve/host/<hostId>` stops every preview, deletes its snapshots, closes its sockets and answers 200 `{ "deleted": true }`; the host answers 410 from then on. A host is deleted the same way once 90 days pass with no API call and no publisher socket open, and none of its snapshots unexpired.
+- **Answers** are JSON: `{ … }` on success, `{ error, code }` otherwise, with `cache-control: no-store`, `Referrer-Policy: no-referrer` and seven's frame headers.
+
+### Previews
+
+| call | does |
+| --- | --- |
+| `POST /api/serve/host/<hostId>/previews` `{ entry?, tag?, bridge?, maxTabs?, quiet?, ttlMs? }` | mints a preview: 201 with the preview's record (below) |
+| `GET /api/serve/host/<hostId>/previews` | `{ previews: [record, …] }`, live ones and snapshots, uploading or ready |
+| `DELETE /api/serve/host/<hostId>/previews/<previewToken>` | stops it: 200 `{ "stopped": true }`, or 404 `PREVIEW_NOT_FOUND` |
+| `PUT /api/serve/host/<hostId>/previews/<previewToken>/files/<path>` | uploads one file of a snapshot |
+| `POST /api/serve/host/<hostId>/previews/<previewToken>/finalize` | publishes the snapshot: 200 with its record |
+
+- **The mint's fields:**
+  - `entry`: the URL path the preview opens at, starting with `/` (default `/`), at most 2,048 characters, without `\` or control characters. The URL is `https://<label>.sliccy.now<entry>`; a live preview's origin answers every path, so `entry` only says where to start.
+  - `tag`: an opaque string of at most 256 characters the publisher picks (`scserve` uses its served root, `/srv/serve/<16 hex>`); the hub only lists it back, so a publisher that restarts can tell its leftovers apart.
+  - `bridge` (default `false`), `maxTabs` (1 to 100, default 20) and `quiet` (default `false`): see [the bridge](#the-bridge-on-sliccynow).
+  - `ttlMs`: makes it a snapshot that lasts that long after it's finalized, a positive whole number of milliseconds, at most 30 days. A snapshot can't be bridged (400).
+- **The record:** `{ previewToken, url, entry, tag, mode, state, bridge, maxTabs, quiet, createdAt, expiresAt, files, bytes }`. `mode` is `live` or `snapshot`; `state` is `ready`, or `uploading` for a snapshot not finalized yet; `expiresAt` is `null` for a live preview and for a snapshot before it's finalized; `files` and `bytes` are a snapshot's (0 for a live preview).
+- **Stopping** a live preview sends `preview.revoked` to the publisher's socket and closes its visitor tabs' bridges; stopping a snapshot deletes its files. Either way its URL answers 404 at once.
+- **A live preview** lives as long as its host: it is served while the publisher's socket is open, and answers 502 while it isn't. Publishers stop the ones they no longer serve.
+
+### Labels
+
+A new preview's label is `<hostId>-<secret>`: the host's 20 hex digits, `-`, and 32 random lowercase hex digits, 53 characters in all. The label is the `previewToken` and the capability: anyone who has the URL can visit, and nobody can guess one. Six's labels always contain `--` (`<32 hex>--<secret>` and `<32 hex>--<hash8>-<secret>`), so the two formats never overlap, and six can't mint a label this hub answers.
+
+### `*.sliccy.now`
+
+The route `*.sliccy.now/*` (zone `sliccy.now`) runs this worker. For `https://<label>.sliccy.now/…`:
+
+- **A label that matches `^[0-9a-f]{20}-[0-9a-f]{32}$`** is this hub's: the preview, served from its publisher's socket (live) or from R2 (a snapshot). A token of that shape nobody minted, or one stopped or expired, is 404.
+- **Every other label** (six's formats, six's MCP hosts, anything else) goes to six's `slicc-preview` worker over the service binding `V6_PREVIEW`, byte for byte: the request as it came (method, URL, headers, body, a WebSocket upgrade) and six's answer as it went, with nothing added or removed, not even `x-sliccy-ai-version`. So six's existing previews, uploads, bridges and errors don't change.
+- **Answers the hub makes itself** on `*.sliccy.now` (errors, snapshot files, the bridge's bootstrap) carry `Content-Security-Policy: frame-ancestors 'none'`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `x-sliccy-ai-version`; errors are `text/plain` and `no-store`. A live preview's answers are the origin's own (below), plus `x-sliccy-ai-version`.
+
+### Full HTTP over the publisher's socket
+
+The publisher holds one WebSocket to the hub, `GET /api/serve/host/<hostId>/ws`, on any origin the API answers on. Browsers can't set headers on a WebSocket, so the secret goes either in `Authorization: Bearer <secret>` or as the subprotocol `bearer.<secret>` next to `slicc-serve.v1` (`new WebSocket(url, ['slicc-serve.v1', 'bearer.' + secret])`); the hub answers with `slicc-serve.v1`. A refusal is the API's JSON error instead of the 101. A host has one socket: a new one replaces the old, which is closed with 4000 (`replaced`). Deleting the host closes it with 4001 (`host deleted`). On a new socket the hub first sends `hello { hostId }`; stopping a live preview through the API sends `preview.revoked { previewToken }`.
+
+**Frames.** Every message is a JSON text frame with a `type`, except body bytes and the keepalive.
+- **Body bytes** are binary frames: the stream's `id` as a 4-byte big-endian unsigned integer, then 1 to 65,536 bytes of body.
+- **Keepalive:** the publisher sends the text frame `ping` every 30 s, and the hub answers `pong` without waking the Durable Object. A socket the hub hasn't heard from for 90 s counts as gone.
+- **Sizes:** a JSON frame is at most 1 MiB, and a header list at most 64 KiB and 256 entries. A larger frame, a binary frame shorter than 5 bytes, or one that isn't JSON where JSON is due closes the socket with 1009 or 1008. A message of an unknown `type` is ignored, so either side can add some later; a body frame or message for a stream that's gone (finished or cancelled) is ignored too.
+
+**A visitor's request** to a live preview opens a stream; the hub numbers them per socket.
+
+| direction | message |
+| --- | --- |
+| hub → publisher | `http.request { id, previewToken, method, url, path, headers, body }` |
+| hub → publisher | the request body's binary frames, then `http.request.end { id }` (only when `body` is `true`) |
+| publisher → hub | `http.response { id, status, headers, body }` |
+| publisher → hub | the response body's binary frames, then `http.response.end { id }` (only when `body` is `true`) |
+| either way | `http.ack { id, bytes }`: the receiver has passed on `bytes` more of the stream's body |
+| either way | `http.cancel { id, reason }`: the stream is over; nothing more is sent for it either way |
+
+- **`url`** is the visitor's full URL (`https://<label>.sliccy.now/a/b?x=1`) and **`path`** its path and query exactly as they came, still percent-encoded; the publisher sends `path` to its origin. **`headers`** is a list of `[name, value]` pairs with lowercase names, in the visitor's order, repeats kept; `body` says whether a request body follows. The request is the visitor's, every method, with the headers below. `Range`, conditional requests and `Cookie` reach the origin as the visitor sent them, so the origin answers 206, 304 and 416 itself.
+- **`status`** is 200 to 599 (no 1xx); `headers` the same shape, so several `Set-Cookie` lines survive. `body` is `false` for `HEAD`, 204 and 304, and the hub ignores any body frames then.
+- **Flow control:** a sender has at most 1 MiB of a stream's body unacknowledged at a time, and the receiver acknowledges bytes once it has passed them on (the hub, as the visitor reads the response; the publisher, as its origin reads the request body), so neither side buffers more than that per stream, however large or long a body is.
+- **Cancelling:** the hub sends `http.cancel` when the visitor goes away or a bound below is hit, and the publisher when its origin fails. A cancel before `http.response` is the visitor's 502; after, the visitor's body ends in an error.
+- **Bounds:**
+  - a request body is at most 100 MiB (`Content-Length` larger is 413 before anything is sent; a body that runs past it is cancelled);
+  - a response body has no length limit, as long as it keeps moving: a live stream (server-sent events, a long download) runs as long as the visitor reads it;
+  - `http.response` must come within 30 s of the request (else 504, `the publisher didn't answer within 30 s`), and each later response frame within 120 s of the one before (else the visitor's body ends in an error);
+  - a request body the publisher doesn't acknowledge for 60 s is cancelled;
+  - a host has at most 256 streams open at once; another visitor request gets 503 with `retry-after: 1`.
+- **When there's no socket**, a live preview answers 502 (`the publisher of this preview is offline`). When the socket closes, every open stream is cancelled as above.
+- **WebSockets** from visitors aren't relayed yet (apart from the bridge): an upgrade to a live preview answers 501. The frame format leaves room for them.
+
+**Headers.** The hub passes on everything an ordinary reverse proxy would, and nothing of its own.
+- **To the publisher:** the visitor's headers without:
+  - the hop-by-hop ones (`connection` and the names it lists, `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `proxy-connection`, `te`, `trailer`, `transfer-encoding`, `upgrade`);
+  - `host` (it's in `url`);
+  - Cloudflare's and any proxy's (`cf-*`, `cdn-loop`, `forwarded`, `x-forwarded-*`, `x-real-ip`, `true-client-ip`), so the visitor's address never reaches a publisher;
+  - `x-sliccy-*`.
+
+  For a bridged preview, `accept-encoding` is replaced by `identity`, so the hub can inject the bootstrap into the page. The publisher sets `Host` for its origin (`127.0.0.1:<port>`, which dev servers checking `Host` accept) and may add `X-Forwarded-Host` and `X-Forwarded-Proto: https`; it rewrites a `Location` on its origin (`http://127.0.0.1:<port>/x`, `http://localhost:<port>/x`) to the path alone, so redirects stay on the preview.
+- **To the visitor:** the origin's headers without the hop-by-hop ones, `alt-svc` and `x-sliccy-*`. A `Content-Length` is kept and must match the body (otherwise the body ends in an error); a `Content-Encoding` is passed on with the bytes as they are. The origin's own `Cache-Control`, CSP and framing headers stand; the hub adds none, and caches nothing.
+- **Cookies:** `sliccy.now` isn't on the Public Suffix List, so a cookie set with `Domain=sliccy.now` would reach every preview. The hub drops the `Domain` attribute from every `Set-Cookie` an origin sends, so each one is host-only and stays with its own preview. (A page's script can still write such a cookie through `document.cookie`; only the Public Suffix List would stop that, so a preview shouldn't trust a cookie it didn't set.) The visitor's `Cookie` header goes to the preview it was sent to and nowhere else; the hub's API never reads cookies.
+
+### Snapshots (`--ttl`)
+
+A snapshot is minted with `ttlMs`, then filled and finalized by its publisher, who can go offline after that.
+- **Uploading:** `PUT …/previews/<previewToken>/files/<path>`, with the host's bearer, a `Content-Length` (411 without) and the file's `Content-Type` (default `application/octet-stream`), answers 200 `{ path, size }`. `<path>` is the file's path under the snapshot's root, each segment percent-encoded; decoded, no segment may be empty, `.` or `..`, or hold `\` or NUL (400). The same path again replaces the file, so a failed upload can simply be retried.
+- **Limits,** checked before the body is stored: 25 MiB per file (413 `FILE_TOO_LARGE`), 1,000 files (413 `TOO_MANY_FILES`) and 50 MiB in all (413 `SNAPSHOT_TOO_LARGE`), the limits of six. Uploading to a finalized snapshot is 409 `SNAPSHOT_FINALIZED`.
+- **Finalizing:** `POST …/finalize` needs the entry's file (the `entry` path, with `index.html` after a final `/`), else 400 `ENTRY_MISSING`. From then on the snapshot is served for `ttlMs`, then deleted. One that isn't finalized within an hour of its mint is deleted.
+- **Storage:** R2, the bucket `sliccy-now-basic-storage` (binding `SERVE_STORAGE`) under `serve/<hostId>/`, a prefix six doesn't use; the host's Durable Object keeps the index and deletes the files with an alarm when the snapshot expires or is stopped.
+- **Serving:** `GET` and `HEAD` (others 405, `Allow: GET, HEAD`). A path is the file of that name; one ending in `/` is its `index.html`; a path without its final `/` whose `index.html` exists is 301 to the path with it (query kept). The query is ignored otherwise. Each file has its type, `ETag` (`If-None-Match` gets 304), `Accept-Ranges: bytes` with one range answered as 206 (and 416 outside the file), `cache-control: no-cache`, and the hub's headers above. Anything else is 404.
+
+### The bridge on sliccy.now
+
+A bridged live preview (`bridge: true`) makes each visitor's tab drivable by the publisher, as six's `serve --bridge` does, with the same bootstrap and visitor protocol.
+- **The bootstrap** is `@ai-ecoverse/cherry`'s published `preview-bridge.js` (a pinned devDependency, bundled into this worker), served at `/__slicc/preview-bridge.js` with `cache-control: public, max-age=86400`. The hub inserts `<script src="/__slicc/preview-bridge.js" data-slicc-token="<previewToken>" data-slicc-ws="wss://<label>.sliccy.now/__slicc/bridge"></script>` right after `<head>` (else `<body>`, else at the end) of every 200 `text/html` answer without a `Content-Encoding`, drops its `Content-Length`, and adds `wss://<label>.sliccy.now` to the `connect-src` of the origin's CSP (or adds `connect-src 'self' wss://<label>.sliccy.now` if it has none).
+- **The tab's socket** is `/__slicc/bridge` (WebSocket). At most `maxTabs` tabs at once per preview (another is 429 `BRIDGE_CAP`). The hub answers the tab's `ping` with `pong`, sends it `{ t: "welcome", connId }`, passes `cdp.req` to it and its `cdp.res` and `emit` frames on. A tab's frame is at most 1 MiB. `POST /__slicc/emit` (the bootstrap's beacon when its socket is down) takes one `{ t: "emit", name, detail }` of at most 16 KiB and answers 204.
+- **On the publisher's socket:**
+  - hub → publisher: `bridge.connected { previewToken, connId, origin, userAgent, connectedAt, replay? }`, `bridge.disconnected { previewToken, connId, reason? }`, `bridge.emit { previewToken, connId, name, detail, at }` (`connId` is `null` for a beacon), and `bridge.cdp.response { connId, id, result?, error? }`;
+  - publisher → hub: `bridge.cdp.request { connId, id, method, params?, sessionId? }` and `bridge.close { connId }`; a request for a tab that's gone is answered `{ code: -32000, message: "Preview bridge connection is gone" }`;
+  - emits: at most 16 KiB each and 20 per tab every 10 s; more are dropped. They go only to the publisher, no webhook.
+- **Reconnecting:** visitor tabs stay with the hub while the publisher's socket is down. A new socket gets, after `hello { hostId }`, `preview.state { previewToken, quiet, announced }` for each bridged preview and `bridge.connected { …, replay: true }` for each tab still there. The publisher latches the first-visit announcement with `preview.state.update { previewToken, announced }`, which the hub keeps.
+- `/__slicc/*` paths of a preview that isn't bridged go to its origin like any other path.
+
+### Moving over
+
+1. **This worker** gets the `ServeHost` class and its migration, the `SERVE_STORAGE` and `V6_PREVIEW` bindings, the API, and the `*.sliccy.now` handler with six's labels forwarded, while `slicc-preview` still has the route. The API works on `*.sliccy.ai` from then on, and integration tests cover the hub with a fake publisher.
+2. **The route:** the `*.sliccy.now/*` route is reassigned from `slicc-preview` to `sliccy-ai` in one step (the route keeps its id, so rolling back is reassigning it again), and `wrangler.json` lists it from then on. `SLICCY_AI_DEPLOY_TOKEN` needs Zone Read and Workers Routes Write on `sliccy.now` for that. Right after, six's existing previews and a new one are checked on production. Six's own `wrangler-preview.jsonc` still names the route, so six's next `slicc-preview` deploy would stop at the route step ("assigned to another worker"); its script still uploads, which is all the forwarding needs.
+3. **The clients** switch: slicc-serve's `scserve` and seven's `serve`, and slicc-bios's page relay, each in their repository. Six's tray API stays as it is, for six.
 
 ## Develop
 
