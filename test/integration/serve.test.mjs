@@ -32,7 +32,8 @@ const six = `export default {
   },
 };`;
 
-const MIB = 1024 * 1024;
+const KIB = 1024;
+const MIB = KIB * KIB;
 const worker = new Miniflare({
   workers: [
     {
@@ -52,8 +53,8 @@ const worker = new Miniflare({
           idle: 1500,
           ack: 1500,
           requestBody: 3 * MIB,
-          file: 2 * MIB,
-          total: 5 * MIB,
+          file: 64 * KIB,
+          total: 160 * KIB,
           files: 4,
           pending: 2500,
         }),
@@ -510,12 +511,12 @@ test('bounds the files of a snapshot', async () => {
       body: new Uint8Array(size),
     });
   const code = async (path, size) => (await (await put(path, size)).json()).code;
-  assert.equal(await code('big', 2 * MIB + 1), 'FILE_TOO_LARGE');
-  assert.equal((await put('a', 2 * MIB)).status, 200);
-  assert.equal((await put('b', 2 * MIB)).status, 200);
-  assert.equal(await code('c', 1.5 * MIB), 'SNAPSHOT_TOO_LARGE');
+  assert.equal(await code('big', 64 * KIB + 1), 'FILE_TOO_LARGE');
+  assert.equal((await put('a', 64 * KIB)).status, 200);
+  assert.equal((await put('b', 64 * KIB)).status, 200);
+  assert.equal(await code('c', 48 * KIB), 'SNAPSHOT_TOO_LARGE');
   assert.equal((await put('a', 1)).status, 200);
-  assert.equal((await put('c', 2 * MIB)).status, 200);
+  assert.equal((await put('c', 64 * KIB)).status, 200);
   assert.equal((await put('d', 1)).status, 200);
   assert.equal(await code('e', 1), 'TOO_MANY_FILES');
   const early = await call(`/previews/${snapshot.previewToken}/finalize`, { method: 'POST' });
