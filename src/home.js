@@ -1,6 +1,7 @@
 import {
   event,
   kept,
+  mcpChallenge,
   parsed,
   provider,
   same,
@@ -525,7 +526,7 @@ export class NtfyHome {
       return fail(401, 'the webhook signature did not verify');
     }
     const json = parsed(bytes);
-    const challenge = slackChallenge(json);
+    const challenge = slackChallenge(json) ?? mcpChallenge(request.headers, json, hook.secret);
     if (challenge) return challenge;
     const message = this.store({
       topic: hook.topic,

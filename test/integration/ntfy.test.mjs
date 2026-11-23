@@ -482,6 +482,67 @@ test('verifies Stripe, Standard Webhooks, Slack and GitLab, and answers the hand
   assert.equal((await poll(kernel, 'meta')).length, 0);
 });
 
+test('answers an MCP Events verification only on a hook whose secret signed it', async () => {
+  const home = await claim();
+  const kernel = await mint(home, { member: 'kernel', scopes: ['subscribe', 'hooks'] });
+  const key = Buffer.from('mcp-events-delivery-secret-bytes');
+  const secret = `whsec_${key.toString('base64')}`;
+  const signedPath = new URL((await hook(kernel, { name: 'mcp', secret })).url).pathname;
+  const openPath = new URL((await hook(kernel, { name: 'mcp-open' })).url).pathname;
+  const envelope = (challenge, signer = key, id = 'msg_verification_1') => {
+    const time = String(Math.floor(Date.now() / 1000));
+    const body = JSON.stringify({ type: 'verification', challenge });
+    return {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'webhook-id': id,
+        'webhook-timestamp': time,
+        'webhook-signature': `v1,${sign(signer, `${id}.${time}.${body}`, 'base64')}`,
+        'x-mcp-subscription-id': 'sub_not_yet_known',
+      },
+      body,
+    };
+  };
+  const echoed = await call(signedPath, envelope('nonce-Abc_123'));
+  assert.equal(echoed.status, 200);
+  assert.deepEqual(await echoed.json(), { challenge: 'nonce-Abc_123' });
+  assert.equal(echoed.headers.get('x-content-type-options'), 'nosniff');
+  assert.match(echoed.headers.get('content-security-policy'), /sandbox/);
+  assert.match(echoed.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+  const forged = await call(signedPath, envelope('nonce-forged', Buffer.from('not-the-secret')));
+  assert.equal(forged.status, 401);
+  assert.doesNotMatch(await forged.text(), /nonce-forged/);
+  const oversized = await call(signedPath, envelope('x'.repeat(1025)));
+  assert.equal(oversized.status, 400);
+  const unprintable = await call(signedPath, envelope('<script>\n'));
+  assert.equal(unprintable.status, 400);
+  const open = await call(openPath, envelope('nonce-open'));
+  assert.equal(open.status, 403);
+  assert.doesNotMatch(await open.text(), /nonce-open/);
+  assert.equal((await poll(kernel, 'mcp')).length, 0);
+  assert.equal((await poll(kernel, 'mcp-open')).length, 0);
+  const time = String(Math.floor(Date.now() / 1000));
+  const gap = '{"type":"gap","cursor":"cursor_1"}';
+  const delivered = await call(signedPath, {
+    method: 'POST',
+    headers: {
+      'webhook-id': 'msg_gap_1',
+      'webhook-timestamp': time,
+      'webhook-signature': `v1,${sign(key, `msg_gap_1.${time}.${gap}`, 'base64')}`,
+      'x-mcp-subscription-id': 'sub_a3f1c8e2b0d49f7e',
+    },
+    body: gap,
+  });
+  assert.equal(delivered.status, 200);
+  const [stored] = await poll(kernel, 'mcp');
+  assert.equal(stored.title, 'gap');
+  assert.equal(stored.message, gap);
+  assert.equal(stored.headers['x-mcp-subscription-id'], 'sub_a3f1c8e2b0d49f7e');
+  const wellKnown = await call('/.well-known/mcp-webhook-receiver.json');
+  assert.equal(wellKnown.ok, false);
+});
+
 test('a home keeps the newest 1,000 messages', async () => {
   const home = await claim();
   const kernel = await mint(home, { member: 'kernel', scopes: ['subscribe', 'publish'] });
