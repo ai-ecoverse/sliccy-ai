@@ -100,9 +100,11 @@ export function signable(headers) {
   return SCHEMES.some(([header]) => headers.has(header));
 }
 
+const scheme = (headers) => SCHEMES.find(([header]) => headers.has(header))?.[1];
+
 export async function signed(headers, body, secret, now = Date.now()) {
-  const scheme = SCHEMES.find(([header]) => headers.has(header));
-  return scheme ? scheme[1](headers, body, secret, now) : false;
+  const check = scheme(headers);
+  return check ? check(headers, body, secret, now) : false;
 }
 
 export function provider(headers) {
@@ -164,8 +166,18 @@ export function verification(request, url, hook) {
   return request.method === 'POST' && validation ? echoed(validation) : null;
 }
 
+const answered = (value) =>
+  ECHO.test(value)
+    ? Response.json({ challenge: value }, { headers: SAFE })
+    : text('bad challenge\n', 400);
+
 export function slackChallenge(json) {
   if (json?.type !== 'url_verification' || typeof json.challenge !== 'string') return null;
-  if (!ECHO.test(json.challenge)) return text('bad challenge\n', 400);
-  return Response.json({ challenge: json.challenge }, { headers: SAFE });
+  return answered(json.challenge);
+}
+
+export function mcpChallenge(headers, json, secret) {
+  if (json?.type !== 'verification' || typeof json.challenge !== 'string') return null;
+  if (scheme(headers) !== standard) return null;
+  return secret ? answered(json.challenge) : text('forbidden\n', 403);
 }
