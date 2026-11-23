@@ -3,7 +3,7 @@ export const HEADER_BUDGET = 8192;
 
 const encoder = new TextEncoder();
 const KEPT =
-  /^(content-type|user-agent|idempotency-key|x-request-id|x-hub-signature(-256)?|x-(github|gitlab|slack|shopify|event|webhook)-[a-z0-9-]+|stripe-[a-z0-9-]+|webhook-[a-z0-9-]+|svix-[a-z0-9-]+)$/;
+  /^(content-type|user-agent|idempotency-key|x-request-id|x-hub-signature(-256)?|x-mcp-subscription-id|x-(github|gitlab|slack|shopify|event|webhook)-[a-z0-9-]+|stripe-[a-z0-9-]+|webhook-[a-z0-9-]+|svix-[a-z0-9-]+)$/;
 const SECRET = /secret|token|passw|auth|cookie|api-?key|signing-key|credential/;
 const ECHO = /^[\x20-\x7e]{1,1024}$/;
 

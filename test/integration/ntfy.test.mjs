@@ -530,6 +530,7 @@ test('answers an MCP Events verification only on a hook whose secret signed it',
       'webhook-id': 'msg_gap_1',
       'webhook-timestamp': time,
       'webhook-signature': `v1,${sign(key, `msg_gap_1.${time}.${gap}`, 'base64')}`,
+      'x-mcp-subscription-id': 'sub_a3f1c8e2b0d49f7e',
     },
     body: gap,
   });
@@ -537,6 +538,7 @@ test('answers an MCP Events verification only on a hook whose secret signed it',
   const [stored] = await poll(kernel, 'mcp');
   assert.equal(stored.title, 'gap');
   assert.equal(stored.message, gap);
+  assert.equal(stored.headers['x-mcp-subscription-id'], 'sub_a3f1c8e2b0d49f7e');
   const wellKnown = await call('/.well-known/mcp-webhook-receiver.json');
   assert.equal(wellKnown.ok, false);
 });
