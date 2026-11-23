@@ -308,7 +308,7 @@ A bridged live preview (`bridge: true`) makes each visitor's tab drivable by the
 ### Moving over
 
 1. **This worker** gets the `ServeHost` class and its migration, the `SERVE_STORAGE` and `V6_PREVIEW` bindings, the API, and the `*.sliccy.now` handler with six's labels forwarded, while `slicc-preview` still has the route. The API works on `*.sliccy.ai` from then on, and integration tests cover the hub with a fake publisher.
-2. **The route:** the `*.sliccy.now/*` route is reassigned from `slicc-preview` to `sliccy-ai` in one step (the route keeps its id, so rolling back is reassigning it again), and `wrangler.json` lists it from then on. `SLICCY_AI_DEPLOY_TOKEN` needs Zone Read and Workers Routes Write on `sliccy.now` for that. Right after, six's existing previews and a new one are checked on production. Six's own `wrangler-preview.jsonc` still names the route, so six's next `slicc-preview` deploy would stop at the route step ("assigned to another worker"); its script still uploads, which is all the forwarding needs.
+2. **The route:** the `*.sliccy.now/*` route is reassigned from `slicc-preview` to `sliccy-ai` in one step (the route keeps its id, so rolling back is reassigning it again), and `wrangler.json` lists it from then on. Wrangler refuses to deploy a route another worker holds, so the reassignment comes before the release that lists it. `SLICCY_AI_DEPLOY_TOKEN` needs Zone Read and Workers Routes Write on `sliccy.now` for that. Right after, six's existing previews and a new one are checked on production. Six's own `wrangler-preview.jsonc` still names the route, so six's next `slicc-preview` deploy would stop at the route step ("assigned to another worker"); its script still uploads, which is all the forwarding needs.
 3. **The clients** switch: slicc-serve's `scserve` and seven's `serve`, and slicc-bios's page relay, each in their repository. Six's tray API stays as it is, for six.
 
 ## Develop
@@ -358,6 +358,7 @@ The post-deploy tests in [`test/integration/live/`](test/integration/live/) (`np
 - that the publish route refuses no token, refuses this repository's own real OIDC token (`not from ai-ecoverse/slicc-bios`, so GitHub's keys and the signature check are exercised), and refuses a tampered one (both deploying jobs have `id-token: write`);
 - that a follower attaches to a tray through `seven.sliccy.ai` (`role: follower`, waiting for a leader);
 - that a tray created through `seven.sliccy.ai` gets `www.sliccy.ai` capability URLs and its leader WebSocket connects through `seven.sliccy.ai`;
+- on `*.sliccy.now`, once the route reaches this worker (a branch version skips these until then; after a release they must pass): that a label in six's format still gets six's own answer (`Preview not found`, without `x-sliccy-ai-version`), that a real six preview, minted through a tray this test leads via `seven.sliccy.ai`, is served by six's leader protocol byte for byte, and that an unknown hub label is the hub's 404; after a release only, that a hub preview relays a request with its query and a `Set-Cookie` made host-only to a publisher on the socket, and that a snapshot is served;
 - that the serve hub's API answers on `seven.sliccy.ai`, and after a release only, that a publisher creates a host, holds its socket (with the secret as a subprotocol), mints, uploads, finalizes, lists and stops previews, and deletes the host;
 - that `ntfy.sliccy.ai` answers its health probe and refuses a topic without a token;
 - after a release only, that a tray created through `seven.sliccy.ai` claims an ntfy home with its controller token (and a forged token is refused), and a signed GitHub webhook over 48 KiB reaches a subscriber as a verified message with an attachment. A branch version at 0% can't run this one: each Durable Object runs the version the deployment split assigns it, whatever the override header says, so every home still runs the stable version;
@@ -368,7 +369,7 @@ Without `SLICCY_AI_VERSION` they run against whatever is live.
 
 Both need the `SLICCY_AI_DEPLOY_TOKEN` secret, an account token with:
 - Workers Scripts Write on the account;
-- Workers Routes Write and Zone Read on `sliccy.ai`.
+- Workers Routes Write and Zone Read on `sliccy.ai` and on `sliccy.now`.
 
 `scripts/deploy.mjs` hands it to wrangler as `CLOUDFLARE_API_TOKEN`, and runs the post-deploy tests without it. The pipeline never passes its own `CLOUDFLARE_API_TOKEN` (the reviewers' screenshot token) to `deploy` or `after-release`, hence the separate name.
 
