@@ -310,8 +310,16 @@ A bridged live preview (`bridge: true`) makes each visitor's tab drivable by the
 ### Moving over
 
 1. **This worker** gets the `ServeHost` class and its migration, the `SERVE_STORAGE` and `V6_PREVIEW` bindings, the API, and the `*.sliccy.now` handler with six's labels forwarded, while `slicc-preview` still has the route. The API works on `*.sliccy.ai` from then on, and integration tests cover the hub with a fake publisher.
-2. **The route:** the `*.sliccy.now/*` route is reassigned from `slicc-preview` to `sliccy-ai` in one step (the route keeps its id, so rolling back is reassigning it again), and `wrangler.json` lists it from then on. Wrangler refuses to deploy a route another worker holds, so the reassignment comes before the release that lists it. `SLICCY_AI_DEPLOY_TOKEN` needs Zone Read and Workers Routes Write on `sliccy.now` for that. Right after, six's existing previews and a new one are checked on production. Six's own `wrangler-preview.jsonc` still names the route, so six's next `slicc-preview` deploy would stop at the route step ("assigned to another worker"); its script still uploads, which is all the forwarding needs.
+2. **The route:** the `*.sliccy.now/*` route is reassigned from `slicc-preview` to `sliccy-ai` in one step (the route keeps its id, so rolling back is reassigning it again), and `wrangler.json` lists it from then on. Wrangler refuses to deploy a route another worker holds, so the reassignment comes before the release that lists it. `SLICCY_AI_DEPLOY_TOKEN` needs Zone Read and Workers Routes Write on `sliccy.now` for that. Right after, six's existing previews and a new one are checked on production. Six's own `wrangler-preview.jsonc` no longer names the route, so six's `slicc-preview` deploys don't touch it; its script still uploads, which is all the forwarding needs.
 3. **The clients** switch: slicc-serve's `scserve` and seven's `serve`, and slicc-bios's page relay, each in their repository. Six's tray API stays as it is, for six.
+
+### Rolling back the route
+
+The route is `*.sliccy.now/*`, id `52e942a4b9924600b9c482245b55fa91`, zone `46d6506442b8be4e4840520ed22961d3`. It has belonged to `sliccy-ai` since release v1.15.0.
+
+- **Traffic:** reassign the route to `slicc-preview` in Cloudflare; it keeps its id. A rollback of this worker's version doesn't move it, and the version before the route, v1.14.0 (`d955c1bb-1d53-4c98-8061-6c6370a95b64`), already forwards six's labels to `slicc-preview`.
+- **Releases:** `wrangler.json` lists the route, and wrangler refuses to deploy a route another worker holds, so every release fails at the route step until a pull request removes the `*.sliccy.now/*` line.
+- **Going forward again:** reassign the route to `sliccy-ai` and restore the line, in that order.
 
 ## Develop
 
