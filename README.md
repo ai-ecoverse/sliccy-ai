@@ -102,6 +102,8 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 
 **Previews:** `*.sliccy.now` and the serve hub's API `/api/serve/*` are described in [Previews on sliccy.now](#previews-on-sliccynow-the-serve-hub).
 
+**Adobe Support:** the Support API (`/api/support/*`) on seven and branch hosts is described in [Adobe Support](#adobe-support).
+
 **A WebSocket echo for tests:** `wss://echo.sliccy.ai/` sends every message back, text and binary. Seven's integration tests use it as a public `wss://` target that SLICC controls, with Cloudflare's real certificate, so a client's certificate-chain check is tested without depending on a third party. The code is in [`src/echo.js`](src/echo.js).
 - **Subprotocols:** the first one offered is accepted.
 - **Limits:**
@@ -321,6 +323,74 @@ The route is `*.sliccy.now/*`, id `52e942a4b9924600b9c482245b55fa91`, zone `46d6
 - **Releases:** `wrangler.json` lists the route, and wrangler refuses to deploy a route another worker holds, so every release fails at the route step until a pull request removes the `*.sliccy.now/*` line.
 - **Going forward again:** reassign the route to `sliccy-ai` and restore the line, in that order.
 
+## Adobe Support
+
+Seven embeds Adobe Support: the Support panel on slicc-spectrum's `support` port ([slicc-spectrum#1008](https://github.com/ai-ecoverse/slicc-spectrum/pull/1008)). The page reaches Opspile's portal integration API (`/integrations/portal/v1`, adobe/helix-opspile's `docs/PORTAL-INTEGRATION.md`) through this worker, which adds the service credentials. The code is in [`src/support.js`](src/support.js).
+
+- **Signing in isn't here:** seven already signs in with Adobe on its own (slicc-bios's `src/seed/adobe.js`). It uses an implicit grant with the IMS client `experience-catalyst-prod` on IMS prod. Its scopes, `openid,AdobeID,additional_info.ownerOrg,read_organizations,…`, come from the Adobe LLM proxy's public `/v1/config`. IMS redirects to SLICC 6's registered relay `https://www.sliccy.ai/auth/callback`, which sends the token on to `https://<label>.sliccy.ai/auth/callback`. The page then gets it over a `BroadcastChannel`, after checking a nonce. The Support port sends that token here, and this worker neither mints, stores nor refreshes it.
+- **Where:** `seven.sliccy.ai` and every published branch host (one whose `branches/<label>.json` exists), at `/api/support/*`. Vault hosts, service hosts, www (`/7/` included) and unpublished labels don't have it, and answer those paths as before.
+- **Two profiles:** `seven` for `seven.sliccy.ai` and `branches` for every branch preview. Each has its own Opspile portal and Access service token, so branch code, which nobody has reviewed, can't reach production Support data with the production service token. `branches` goes to Opspile's staging portal with a service token of its own, and must never hold the production one.
+- **One IMS client for both:** both profiles get production IMS tokens from `experience-catalyst-prod`, since branches sign in like seven. The staging Opspile host registration therefore has to accept prod IMS tokens for that client (identity environment `prod`, client ID `experience-catalyst-prod`), not stg1 ones. Its customers and members should be test enrollments.
+- **Same origin only:** every call needs `Sec-Fetch-Site: same-origin`, and an `Origin`, if sent, must be the host's own; anything else is 403 `forbidden`. There are no CORS headers, and no cookies are read or set.
+- **Answers:** JSON, with `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and seven's frame headers. Errors have Opspile's v1 shape, `{"error":{"code":"…"}}`. The worker's own codes are:
+  - `invalid_input` (400);
+  - `invalid_assertion` (401, no bearer token or a malformed one);
+  - `forbidden` (403);
+  - `not_found` (404);
+  - `method_not_allowed` (405, with `Allow`);
+  - `unavailable` (503, also when the profile isn't configured).
+- **Nothing logged:** the module doesn't log. Tokens and message text never go into a log or a URL.
+
+### The Support API
+
+`/api/support/*` is a fixed map of Opspile's v1 operations. The page sends `Authorization: Bearer <IMS access token>`, the one seven signed in with.
+
+| call | goes to `<portal>/integrations/portal/v1` |
+|---|---|
+| `GET /api/support/threads?limit=&cursor=` | `GET /threads` (list) |
+| `POST /api/support/threads` `{ title, body, topic? }`, with `Idempotency-Key` | `POST /threads` (create) |
+| `GET /api/support/threads/<root>?limit=&cursor=` | `GET /threads/<root>` (detail) |
+| `POST /api/support/threads/<root>/replies` `{ body }`, with `Idempotency-Key` | `POST /threads/<root>/replies` (reply) |
+| `PUT /api/support/threads/<root>/read` `{ through }` | `PUT /threads/<root>/read` (read) |
+| `GET /api/support/changes?after=` | `GET /changes` (changes) |
+
+- **What's checked:** any other path is 404 and any other method 405. Then, before anything is sent:
+  - `<root>` is 1 to 128 of `A-Z a-z 0-9 . _ : -`;
+  - only the listed query parameters, once each: `limit` from 1 to 100, and `cursor` and `after` up to 2,048 printable ASCII characters;
+  - a body is `application/json`, at most 16 KiB, an object with only the listed string fields (`topic` is optional), and what's sent on is rebuilt from those fields;
+  - `Idempotency-Key` is 1 to 128 of `A-Z a-z 0-9 . _ : -`, and both POSTs need one;
+  - the bearer token is up to 8 KiB of base64url characters, `.`, `+`, `/`, `=` and `~`.
+
+  A failed check is 400 `invalid_input`, or 401 `invalid_assertion` for the token. Opspile checks the content itself (lengths, topics).
+- **What's sent:** only `Accept: application/json`, `Authorization: Bearer <the user's IMS token>` as issued, the profile's `CF-Access-Client-Id` and `CF-Access-Client-Secret`, and for writes `Content-Type: application/json` and the `Idempotency-Key`. No tenant, org, subject or email: Opspile verifies the IMS token itself and takes the organization from the IMS profile (its host-passed identity mode, with one host registration per profile). The request carries no cookies, follows no redirects and gives up after 15 s.
+- **What comes back:**
+  - a 2xx JSON answer, with its status. A create's `Location` becomes `/api/support/threads/<id>`, and any other `Location` is dropped;
+  - a v1 error, with its status, as `{"error":{"code"}}` and nothing else of its body;
+  - `rate_limited` for a 429 without one;
+  - 503 `unavailable` for anything else: an Access refusal or redirect, an answer that isn't JSON, a timeout.
+
+  `Retry-After` passes through on every answer. No other upstream header reaches the page.
+- **Enrollment:** Opspile has no status operation yet. `GET /api/support/threads?limit=1` is 200 when the signed-in profile is enrolled and 403 `not_enrolled` when it isn't, and 401 `invalid_assertion` means signing in again (the token expired, was revoked, or isn't from a client Opspile accepts).
+
+### Configuration
+
+| name | kind | what |
+|---|---|---|
+| `SUPPORT_PORTAL_<PROFILE>` | secret | the portal Worker's origin (`https://…`, no path) |
+| `SUPPORT_ACCESS_ID_<PROFILE>`, `SUPPORT_ACCESS_SECRET_<PROFILE>` | secrets | the Cloudflare Access service token Opspile registered for the profile |
+
+`<PROFILE>` is `SEVEN` or `BRANCHES`. Without its portal and service token, a profile's API answers 503 `unavailable` and calls nothing. Portal origins are secrets too: they go to Opspile's operator out of band, not into this repository. None is set yet.
+
+### Setting it up
+
+Support works once these manual steps are done:
+1. **The IMS client:** the owners of `experience-catalyst-prod` confirm that Support may rely on it and on its `additional_info.ownerOrg` scope. Opspile takes the customer from the signed-in profile's `ownerOrg`.
+2. **Opspile:** two host registrations with IMS identity, both for IMS prod and the client `experience-catalyst-prod`: one on the production portal for `seven`, one on the staging portal for `branches`. Each has its own Access service token, and the customers and members are enrolled as PORTAL-INTEGRATION.md describes.
+3. **Secrets:** someone with the deploy token sets each profile's secrets above with `wrangler secret put <NAME>`, after the release that ships this. That command deploys the current version with them.
+4. **slicc-bios:** its `SupportPort`, and its service worker passing `/api/support/*` to the network.
+
+Production seven on `www.sliccy.ai/7/` doesn't have Support yet. It would need the route under `/7/`, with the `seven` profile.
+
 ## Develop
 
 ```sh
@@ -329,7 +399,7 @@ npm test
 npm run lint
 ```
 
-`npm test` runs the router in workerd through [Miniflare](https://github.com/cloudflare/workers-sdk/tree/main/packages/miniflare) against a local R2 bucket, using `wrangler.json` for the compatibility date and bindings. The serve hub's tests (`serve.test.mjs`) run the `ServeHost` Durable Object with a fake publisher ([`publisher.mjs`](test/integration/publisher.mjs)) that speaks the socket protocol, flow control included, and a stand-in `slicc-preview` behind `V6_PREVIEW`; `SERVE_LIMITS` (a JSON object, unset in production) shortens the hub's timeouts and bounds for them. The ntfy tests run the `NtfyHome` Durable Object and a stand-in `slicc-tray-hub` that exports a `SessionTrayDurableObject`, reached through the same cross-script binding as in production.
+`npm test` runs the router in workerd through [Miniflare](https://github.com/cloudflare/workers-sdk/tree/main/packages/miniflare) against a local R2 bucket, using `wrangler.json` for the compatibility date and bindings. The serve hub's tests (`serve.test.mjs`) run the `ServeHost` Durable Object with a fake publisher ([`publisher.mjs`](test/integration/publisher.mjs)) that speaks the socket protocol, flow control included, and a stand-in `slicc-preview` behind `V6_PREVIEW`; `SERVE_LIMITS` (a JSON object, unset in production) shortens the hub's timeouts and bounds for them. The ntfy tests run the `NtfyHome` Durable Object and a stand-in `slicc-tray-hub` that exports a `SessionTrayDurableObject`, reached through the same cross-script binding as in production. The Adobe Support tests (`support.test.mjs`) answer for the Opspile portal with Miniflare's `outboundService` ([`opspile.mjs`](test/integration/opspile.mjs)), with made-up secrets.
 
 `deploy.test.mjs` runs [`scripts/deploy.mjs`](scripts/deploy.mjs) against a stand-in wrangler and a fixture git repository with release tags, so the pull request deploy's choice of the stable version is tested without Cloudflare.
 

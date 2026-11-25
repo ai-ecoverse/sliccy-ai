@@ -7,6 +7,7 @@ import { mcpcat } from './mcpcat.js';
 import { ntfy } from './ntfy.js';
 import { publish } from './publish.js';
 import { api, hubHost, onNow, visit } from './serve.js';
+import { SUPPORT_PATH, support } from './support.js';
 
 export { NtfyHome } from './home.js';
 export { ServeHost } from './host.js';
@@ -232,6 +233,8 @@ async function published(env, url) {
 async function seven(request, env, url) {
   if (url.pathname.startsWith('/api/publish/')) return publish(request, env);
   if (url.pathname.startsWith('/api/serve/')) return api(request, env, url.pathname);
+  if (url.pathname.startsWith(SUPPORT_PATH) && (await published(env, url)))
+    return support(request, env, url);
   if (url.pathname === CLIENT_PATH && (await published(env, url)))
     return client(request, `https://${url.hostname}`);
   if (!readable(request)) {
