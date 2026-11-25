@@ -5,11 +5,12 @@ import { opspile, PORTAL_BRANCHES, PORTAL_SEVEN, SAME } from './opspile.mjs';
 const proxy = opspile();
 const SEVEN = 'https://seven.sliccy.ai';
 const BRANCH = 'https://feat-shell.sliccy.ai';
+const WWW = 'https://www.sliccy.ai';
 const TOKEN = 'eyJhbGciOiJSUzI1NiJ9.eyJ1c2VyX2lkIjoiQUJDIn0.c2ln-_';
 const V1 = `${PORTAL_SEVEN}/integrations/portal/v1`;
 
-const call = (path, { method = 'GET', body, headers = {}, origin = SEVEN } = {}) =>
-  proxy.fetch(`${origin}/api/support/${path}`, {
+const call = (path, { method = 'GET', body, headers = {}, origin = SEVEN, mount = '' } = {}) =>
+  proxy.fetch(`${origin}${mount}/api/support/${path}`, {
     method,
     headers: {
       ...SAME,
@@ -111,26 +112,32 @@ const operations = [
 ];
 
 for (const [name, path, init, method, url, body] of operations) {
-  test(`${name} goes to its v1 operation with the service credentials and the user's token only`, async () => {
-    upstream(200, { items: [], next: null });
-    const response = await call(path, {
-      ...init,
-      headers: { cookie: 'a=b', 'x-extra': '1', ...init.headers },
+  for (const [where, origin, mount] of [
+    ['seven', SEVEN, ''],
+    ['www/7', WWW, '/7'],
+  ])
+    test(`${name} on ${where} goes to its v1 operation with the service credentials and the user's token only`, async () => {
+      upstream(200, { items: [], next: null });
+      const response = await call(path, {
+        ...init,
+        origin,
+        mount,
+        headers: { cookie: 'a=b', 'x-extra': '1', ...init.headers },
+      });
+      assert.equal(response.status, 200);
+      assertPrivate(response);
+      assert.deepEqual(await response.json(), { items: [], next: null });
+      assert.equal(proxy.seen.length, 1);
+      const [forwarded] = proxy.seen;
+      assert.equal(forwarded.method, method);
+      assert.equal(forwarded.url, url);
+      const expected = { ...credentials };
+      if (body) expected['content-type'] = 'application/json';
+      if (init.headers?.['idempotency-key'])
+        expected['idempotency-key'] = init.headers['idempotency-key'];
+      assert.deepEqual(sent(forwarded), expected);
+      assert.equal(forwarded.body, body ? JSON.stringify(body) : '');
     });
-    assert.equal(response.status, 200);
-    assertPrivate(response);
-    assert.deepEqual(await response.json(), { items: [], next: null });
-    assert.equal(proxy.seen.length, 1);
-    const [forwarded] = proxy.seen;
-    assert.equal(forwarded.method, method);
-    assert.equal(forwarded.url, url);
-    const expected = { ...credentials };
-    if (body) expected['content-type'] = 'application/json';
-    if (init.headers?.['idempotency-key'])
-      expected['idempotency-key'] = init.headers['idempotency-key'];
-    assert.deepEqual(sent(forwarded), expected);
-    assert.equal(forwarded.body, body ? JSON.stringify(body) : '');
-  });
 }
 
 test('a branch uses its own portal and service token', async () => {
@@ -347,13 +354,12 @@ test('without its configuration a profile is unavailable and calls nobody', asyn
   assert.equal(bare.seen.length, 0);
 });
 
-test('the proxy is only on seven and published branches', async () => {
+test('the proxy is only on seven, published branches and www/7', async () => {
   upstream();
   for (const url of [
     'https://nobody.sliccy.ai/api/support/threads',
     'https://vault.sliccy.ai/api/support/threads',
     'https://vault-feat.sliccy.ai/api/support/threads',
-    'https://www.sliccy.ai/7/api/support/threads',
   ]) {
     const response = await proxy.fetch(url, {
       headers: { ...SAME, authorization: `Bearer ${TOKEN}` },
@@ -362,4 +368,91 @@ test('the proxy is only on seven and published branches', async () => {
     assert.equal(await response.text(), 'not found');
   }
   assert.equal(proxy.seen.length, 0);
+});
+
+test('on www, a created thread points under /7/api/support/', async () => {
+  upstream(201, { threadId: 't1' }, { location: '/integrations/portal/v1/threads/t1' });
+  const response = await call('threads', {
+    origin: WWW,
+    mount: '/7',
+    method: 'POST',
+    body: { title: 'T', body: 'B' },
+    headers: { 'idempotency-key': 'k' },
+  });
+  assert.equal(response.status, 201);
+  assertPrivate(response);
+  assert.equal(response.headers.get('location'), '/7/api/support/threads/t1');
+  await response.arrayBuffer();
+  assert.equal(proxy.seen[0].url, `${V1}/threads`);
+  assert.equal(proxy.seen[0].headers['cf-access-client-id'], 'seven-access.access');
+});
+
+test('on www, only www itself may call /7/api/support/', async () => {
+  upstream();
+  for (const headers of [
+    { 'sec-fetch-site': 'cross-site' },
+    { 'sec-fetch-site': 'same-site' },
+    { origin: SEVEN },
+    { origin: 'https://www.sliccy.ai.evil.example' },
+  ]) {
+    const response = await call('threads', { origin: WWW, mount: '/7', headers });
+    assert.equal(response.status, 403, JSON.stringify(headers));
+    assertPrivate(response);
+    assert.deepEqual(await response.json(), { error: { code: 'forbidden' } });
+  }
+  assert.equal(proxy.seen.length, 0);
+  const own = await call('threads', { origin: WWW, mount: '/7', headers: { origin: WWW } });
+  assert.equal(own.status, 200);
+  await own.arrayBuffer();
+});
+
+test('on www, /7/api/support/ has only the fixed routes, and the other checks', async () => {
+  upstream();
+  for (const [path, method, status] of [
+    ['other', 'GET', 404],
+    ['threads/a%2Fb', 'GET', 404],
+    ['threads', 'DELETE', 405],
+  ]) {
+    const response = await call(path, { origin: WWW, mount: '/7', method });
+    assert.equal(response.status, status, `${method} ${path}`);
+    assertPrivate(response);
+    await response.arrayBuffer();
+  }
+  for (const [path, init, status] of [
+    ['threads', { headers: { authorization: '' } }, 401],
+    ['threads?x=1', {}, 400],
+    ['threads', { method: 'POST', body: { title: 'T', body: 'B' } }, 400],
+  ]) {
+    const response = await call(path, { origin: WWW, mount: '/7', ...init });
+    assert.equal(response.status, status, path);
+    await response.arrayBuffer();
+  }
+  assert.equal(proxy.seen.length, 0);
+});
+
+test("www's own /api/support/ stays SLICC 6's", async () => {
+  upstream();
+  proxy.six.length = 0;
+  for (const path of ['/api/support/threads', '/70/api/support/threads']) {
+    const response = await proxy.fetch(`${WWW}${path}`, {
+      headers: { ...SAME, authorization: `Bearer ${TOKEN}` },
+    });
+    assert.equal(await response.text(), 'six', path);
+    assert.equal(response.headers.get('cache-control'), null);
+  }
+  assert.deepEqual(proxy.six, [
+    { method: 'GET', url: `${WWW}/api/support/threads`, authorization: `Bearer ${TOKEN}` },
+    { method: 'GET', url: `${WWW}/70/api/support/threads`, authorization: `Bearer ${TOKEN}` },
+  ]);
+  assert.equal(proxy.seen.length, 0);
+});
+
+test('www/7 uses the seven profile, and is unavailable without it', async () => {
+  const bare = opspile({ SUPPORT_ACCESS_SECRET_SEVEN: '' });
+  const response = await bare.fetch(`${WWW}/7/api/support/threads`, {
+    headers: { ...SAME, authorization: `Bearer ${TOKEN}` },
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: { code: 'unavailable' } });
+  assert.equal(bare.seen.length, 0);
 });

@@ -63,8 +63,10 @@ const sameOrigin = (request, url) =>
 
 const bearer = (request) => BEARER.exec(request.headers.get('authorization') ?? '')?.[1] ?? null;
 
+const SEVEN = new Set(['seven.sliccy.ai', 'www.sliccy.ai']);
+
 const setting = (env, url, name) =>
-  env[`${name}_${url.hostname.split('.')[0] === 'seven' ? 'SEVEN' : 'BRANCHES'}`];
+  env[`${name}_${SEVEN.has(url.hostname) ? 'SEVEN' : 'BRANCHES'}`];
 
 const portalOf = (value) => {
   try {
@@ -124,7 +126,7 @@ const moved = (location, target) => {
   }
 };
 
-async function relay(upstream, target) {
+async function relay(upstream, target, mount) {
   const retry = upstream.headers.get('retry-after');
   const headers = retry && RETRY.test(retry) ? { 'retry-after': retry } : {};
   const parsed = parse(await upstream.text().catch(() => ''));
@@ -132,7 +134,7 @@ async function relay(upstream, target) {
   if (status >= 200 && status < 300 && parsed && typeof parsed === 'object') {
     const location = upstream.headers.get('location');
     const created = location && moved(location, target);
-    if (created) headers.location = `${SUPPORT_PATH}threads/${created[1]}`;
+    if (created) headers.location = `${mount}${SUPPORT_PATH}threads/${created[1]}`;
     return answer(status, parsed, headers);
   }
   const code = parsed?.error?.code;
@@ -141,8 +143,8 @@ async function relay(upstream, target) {
   return failure(503, 'unavailable', headers);
 }
 
-export async function support(request, env, url) {
-  const path = url.pathname.slice(SUPPORT_PATH.length);
+export async function support(request, env, url, mount = '') {
+  const path = url.pathname.slice(`${mount}${SUPPORT_PATH}`.length);
   const matching = OPERATIONS.filter(({ path: pattern }) => pattern.test(path));
   if (!matching.length) return failure(404, 'not_found');
   const operation = matching.find(({ method }) => method === request.method);
@@ -185,5 +187,5 @@ export async function support(request, env, url) {
   } catch {
     return failure(503, 'unavailable');
   }
-  return relay(upstream, target);
+  return relay(upstream, target, mount);
 }

@@ -200,6 +200,7 @@ async function sevenOnWww(request, env, url, inner) {
   }
   if (inner.pathname === CLIENT_PATH) return client(request, `${WWW}${BIOS_ON_WWW}`);
   if (inner.pathname.startsWith('/api/serve/')) return api(request, env, inner.pathname);
+  if (inner.pathname.startsWith(SUPPORT_PATH)) return support(request, env, url, BIOS_ON_WWW);
   if (!readable(request)) {
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
   }
