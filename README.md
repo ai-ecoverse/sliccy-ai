@@ -102,7 +102,7 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 
 **Previews:** `*.sliccy.now` and the serve hub's API `/api/serve/*` are described in [Previews on sliccy.now](#previews-on-sliccynow-the-serve-hub).
 
-**Adobe Support:** the Support API (`/api/support/*`) on seven and branch hosts is described in [Adobe Support](#adobe-support).
+**Adobe Support:** the Support API (`/api/support/*` on seven and branch hosts, `/7/api/support/*` on www) is described in [Adobe Support](#adobe-support).
 
 **A WebSocket echo for tests:** `wss://echo.sliccy.ai/` sends every message back, text and binary. Seven's integration tests use it as a public `wss://` target that SLICC controls, with Cloudflare's real certificate, so a client's certificate-chain check is tested without depending on a third party. The code is in [`src/echo.js`](src/echo.js).
 - **Subprotocols:** the first one offered is accepted.
@@ -172,7 +172,7 @@ Seven shares `www.sliccy.ai` with SLICC 6 while six's users upgrade in place (ai
 - **`/7/<path>`** is R2's `seven/<path>`, exactly as `seven.sliccy.ai` serves it: `index.html` for directories, the ETag with 304 and 412, `no-store` on HTML documents, and `frame-ancestors 'self'` with `X-Frame-Options` on every answer, as are `/7`'s 301 and `/os/`'s 302 and 404. `/7/sw.js` also gets `Service-Worker-Allowed: /`, so the BIOS registers its service worker at scope `/` and the UI is `/os/`. After the upgrade, seven's service worker answers `/` too.
 - **The tray hub under `/7`:** `POST /7/tray`, `/7/controller/<token>` (WebSocket included), `/7/join/<token>`, `POST /7/api/tray/<trayId>/supersede` and the guest-seat routes are the tray routes above without the `/7`: cookies dropped both ways, a 3xx answered as 200 with `x-tray-status` and `x-tray-location`, and the same frame headers. Seven could reach the hub on www directly, but then it would send www's cookies and couldn't read the hub's redirects.
 - **`/os/*`** is answered from OPFS by seven's service worker. A navigation that reaches the network instead (`Sec-Fetch-Mode: navigate` or `Sec-Fetch-Dest: document`: a first visit, a cleared site, a hard reload) gets a 302 to `/7/`, so it goes through the BIOS; anything else there is a 404. Without this route, tray-hub's single-page fallback would answer `/os/` with six's `index.html`.
-- **Nothing is written on www:** `/7/` answers only GET and HEAD outside the tray routes and the serve hub's `/7/api/serve/*` (see [Previews on sliccy.now](#previews-on-sliccynow-the-serve-hub)), so `/7/api/publish/*` is a 404 (405 for writes).
+- **Nothing is written on www:** `/7/` answers only GET and HEAD outside the tray routes, the serve hub's `/7/api/serve/*` (see [Previews on sliccy.now](#previews-on-sliccynow-the-serve-hub)) and the Support API's `/7/api/support/*` (see [Adobe Support](#adobe-support)), so `/7/api/publish/*` is a 404 (405 for writes).
 - **The vault:** production seven runs on www too, so the production vault lets it embed (see the vault above). In a browser that hasn't upgraded yet, six's `/preview/` service worker serves agent-written HTML unsandboxed on www, and that HTML could frame the production vault. The vault's storage there is partitioned under www, though, and stays empty until seven runs in that browser, and the upgrade unregisters six's `/preview/` before seven stores anything (ai-ecoverse/slicc#4051).
 - **Fonts** on www stay tray-hub's own `/fonts/*`, same-origin for seven there.
 - **Later:** when `www.sliccy.ai/` serves the BIOS, `/7/` keeps working, because bookmarks and the service worker's script URL `/7/sw.js` must not move.
@@ -328,10 +328,14 @@ The route is `*.sliccy.now/*`, id `52e942a4b9924600b9c482245b55fa91`, zone `46d6
 Seven embeds Adobe Support: the Support panel on slicc-spectrum's `support` port ([slicc-spectrum#1008](https://github.com/ai-ecoverse/slicc-spectrum/pull/1008)). The page reaches Opspile's portal integration API (`/integrations/portal/v1`, adobe/helix-opspile's `docs/PORTAL-INTEGRATION.md`) through this worker, which adds the service credentials. The code is in [`src/support.js`](src/support.js).
 
 - **Signing in isn't here:** seven already signs in with Adobe on its own (slicc-bios's `src/seed/adobe.js`). It uses an implicit grant with the IMS client `experience-catalyst-prod` on IMS prod. Its scopes, `openid,AdobeID,additional_info.ownerOrg,read_organizations,…`, come from the Adobe LLM proxy's public `/v1/config`. IMS redirects to SLICC 6's registered relay `https://www.sliccy.ai/auth/callback`, which sends the token on to `https://<label>.sliccy.ai/auth/callback`. The page then gets it over a `BroadcastChannel`, after checking a nonce. The Support port sends that token here, and this worker neither mints, stores nor refreshes it.
-- **Where:** `seven.sliccy.ai` and every published branch host (one whose `branches/<label>.json` exists), at `/api/support/*`. Vault hosts, service hosts, www (`/7/` included) and unpublished labels don't have it, and answer those paths as before.
-- **Two profiles:** `seven` for `seven.sliccy.ai` and `branches` for every branch preview. Each has its own Opspile portal and Access service token, so branch code, which nobody has reviewed, can't reach production Support data with the production service token. `branches` goes to Opspile's staging portal with a service token of its own, and must never hold the production one.
+- **Where:**
+  - `/api/support/*` on `seven.sliccy.ai` and every published branch host (one whose `branches/<label>.json` exists);
+  - `/7/api/support/*` on `www.sliccy.ai`, where production seven also runs (see [Seven on www.sliccy.ai](#seven-on-wwwsliccyai)). It's the same fixed map with the `seven` profile, and a create's `Location` points under `/7/api/support/`.
+
+  www's own `/api/support/*` stays SLICC 6's, passed on to `slicc-tray-hub` unchanged. Vault hosts, service hosts and unpublished labels don't have the API, and answer those paths as before.
+- **Two profiles:** `seven` for `seven.sliccy.ai` and `www.sliccy.ai/7/`, and `branches` for every branch preview. Each has its own Opspile portal and Access service token, so branch code, which nobody has reviewed, can't reach production Support data with the production service token. `branches` goes to Opspile's staging portal with a service token of its own, and must never hold the production one.
 - **One IMS client for both:** both profiles get production IMS tokens from `experience-catalyst-prod`, since branches sign in like seven. The staging Opspile host registration therefore has to accept prod IMS tokens for that client (identity environment `prod`, client ID `experience-catalyst-prod`), not stg1 ones. Its customers and members should be test enrollments.
-- **Same origin only:** every call needs `Sec-Fetch-Site: same-origin`, and an `Origin`, if sent, must be the host's own; anything else is 403 `forbidden`. There are no CORS headers, and no cookies are read or set.
+- **Same origin only:** every call needs `Sec-Fetch-Site: same-origin`, and an `Origin`, if sent, must be the host's own (`https://www.sliccy.ai` on www); anything else is 403 `forbidden`. There are no CORS headers, and no cookies are read or set.
 - **Answers:** JSON, with `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and seven's frame headers. Errors have Opspile's v1 shape, `{"error":{"code":"…"}}`. The worker's own codes are:
   - `invalid_input` (400);
   - `invalid_assertion` (401, no bearer token or a malformed one);
@@ -379,7 +383,7 @@ Seven embeds Adobe Support: the Support panel on slicc-spectrum's `support` port
 | `SUPPORT_PORTAL_<PROFILE>` | secret | the portal Worker's origin (`https://…`, no path) |
 | `SUPPORT_ACCESS_ID_<PROFILE>`, `SUPPORT_ACCESS_SECRET_<PROFILE>` | secrets | the Cloudflare Access service token Opspile registered for the profile |
 
-`<PROFILE>` is `SEVEN` or `BRANCHES`. Without its portal and service token, a profile's API answers 503 `unavailable` and calls nothing. Portal origins are secrets too: they go to Opspile's operator out of band, not into this repository. None is set yet.
+`<PROFILE>` is `SEVEN` or `BRANCHES`. Without its portal and service token, a profile's API answers 503 `unavailable` and calls nothing. Portal origins are secrets too: they go to Opspile's operator out of band, not into this repository. The `seven` profile's are set.
 
 ### Setting it up
 
@@ -389,7 +393,7 @@ Support works once these manual steps are done:
 3. **Secrets:** someone with the deploy token sets each profile's secrets above with `wrangler secret put <NAME>`, after the release that ships this. That command deploys the current version with them.
 4. **slicc-bios:** its `SupportPort`, and its service worker passing `/api/support/*` to the network.
 
-Production seven on `www.sliccy.ai/7/` doesn't have Support yet. It would need the route under `/7/`, with the `seven` profile.
+**On www:** `www.sliccy.ai` is one origin for SLICC 6 and seven's `/7/`. A token seven holds there is visible to SLICC 6's pages on www, through script or its service worker. That includes the IMS token the Support API sends, which is the same token seven's existing Adobe sign-in already holds on www. `/7/api/support/*` adds no new exposure, and same-origin is the only check it can make: a SLICC 6 page holding the token could call it too.
 
 ## Develop
 

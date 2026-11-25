@@ -22,6 +22,7 @@ export const SAME = { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors' 
 
 export function opspile(extra = {}) {
   const seen = [];
+  const six = [];
   const state = { answer: () => new Response('unexpected', { status: 500 }) };
   const worker = new Miniflare({
     modules: true,
@@ -36,6 +37,16 @@ export function opspile(extra = {}) {
       ...secrets,
       ...extra,
       [config.version_metadata.binding]: { id: 'local' },
+    },
+    serviceBindings: {
+      [config.services[0].binding]: async (request) => {
+        six.push({
+          method: request.method,
+          url: request.url,
+          authorization: request.headers.get('authorization'),
+        });
+        return new Response('six', { headers: { 'content-type': 'text/plain' } });
+      },
     },
     outboundService: async (request) => {
       const call = {
@@ -54,6 +65,7 @@ export function opspile(extra = {}) {
     .then((bucket) => bucket.put('branches/feat-shell.json', '{"branch":"feat/shell","files":[]}'));
   return {
     seen,
+    six,
     answer(handler) {
       state.answer = handler;
       seen.length = 0;
