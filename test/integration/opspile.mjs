@@ -6,15 +6,10 @@ import { Miniflare } from 'miniflare';
 const root = new URL('../../', import.meta.url);
 const config = JSON.parse(readFileSync(new URL('wrangler.json', root)));
 
-export const IMS_PROD = 'https://ims-na1.adobelogin.com';
-export const IMS_STG1 = 'https://ims-na1-stg1.adobelogin.com';
 export const PORTAL_SEVEN = 'https://portal.opspile.test';
 export const PORTAL_BRANCHES = 'https://portal-stage.opspile.test';
 
 export const secrets = {
-  IMS_CLIENT_ID_SEVEN: 'seven-client',
-  IMS_CLIENT_SECRET_SEVEN: 'seven-client-secret',
-  IMS_CLIENT_ID_BRANCHES: 'branch-client',
   SUPPORT_PORTAL_SEVEN: PORTAL_SEVEN,
   SUPPORT_ACCESS_ID_SEVEN: 'seven-access.access',
   SUPPORT_ACCESS_SECRET_SEVEN: 'seven-access-secret',
@@ -25,7 +20,7 @@ export const secrets = {
 
 export const SAME = { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors' };
 
-export function adobe(extra = {}) {
+export function opspile(extra = {}) {
   const seen = [];
   const state = { answer: () => new Response('unexpected', { status: 500 }) };
   const worker = new Miniflare({
@@ -38,7 +33,6 @@ export function adobe(extra = {}) {
     compatibilityDate: config.compatibility_date,
     r2Buckets: [config.r2_buckets[0].binding],
     bindings: {
-      ...config.vars,
       ...secrets,
       ...extra,
       [config.version_metadata.binding]: { id: 'local' },
@@ -70,8 +64,3 @@ export function adobe(extra = {}) {
     },
   };
 }
-
-export const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
-
-export const idToken = (claims) =>
-  `${encode({ alg: 'RS256', kid: 'ims' })}.${encode(claims)}.c2lnbmF0dXJl`;

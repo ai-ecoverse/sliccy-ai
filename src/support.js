@@ -1,5 +1,3 @@
-import { answer, bearer, failure, input, is, portalConfig, sameOrigin } from './adobe.js';
-
 export const SUPPORT_PATH = '/api/support/';
 const UPSTREAM = '/integrations/portal/v1/';
 const ROOT = '([A-Za-z0-9._:-]{1,128})';
@@ -20,6 +18,69 @@ const OPERATIONS = [
   { method: 'GET', path: /^changes$/, query: { after: CURSOR } },
 ];
 const CREATED = new RegExp(`^${UPSTREAM}threads/${ROOT}$`);
+
+const PRIVATE = {
+  'cache-control': 'private, no-store',
+  'referrer-policy': 'no-referrer',
+  'x-content-type-options': 'nosniff',
+};
+
+const BEARER = /^Bearer ([A-Za-z0-9._~+/=-]{1,8192})$/;
+
+const is = (pattern, value) => typeof value === 'string' && pattern.test(value);
+
+async function input(request, max) {
+  if (
+    Number(request.headers.get('content-length')) > max ||
+    !request.headers.get('content-type')?.startsWith('application/json')
+  )
+    return null;
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request.body ?? []) {
+    size += chunk.byteLength;
+    if (size > max) return null;
+    chunks.push(chunk);
+  }
+  try {
+    const value = JSON.parse(await new Blob(chunks).text());
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+const answer = (status, body, headers = {}) =>
+  Response.json(body, { status, headers: { ...PRIVATE, ...headers } });
+
+const failure = (status, code, headers = {}) => answer(status, { error: { code } }, headers);
+
+const origin = (url) => `https://${url.hostname}`;
+
+const sameOrigin = (request, url) =>
+  request.headers.get('sec-fetch-site') === 'same-origin' &&
+  (request.headers.get('origin') ?? origin(url)) === origin(url);
+
+const bearer = (request) => BEARER.exec(request.headers.get('authorization') ?? '')?.[1] ?? null;
+
+const setting = (env, url, name) =>
+  env[`${name}_${url.hostname.split('.')[0] === 'seven' ? 'SEVEN' : 'BRANCHES'}`];
+
+const portalOf = (value) => {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.origin === value ? value : null;
+  } catch {
+    return null;
+  }
+};
+
+function portalConfig(env, url) {
+  const portal = portalOf(setting(env, url, 'SUPPORT_PORTAL'));
+  const id = setting(env, url, 'SUPPORT_ACCESS_ID');
+  const secret = setting(env, url, 'SUPPORT_ACCESS_SECRET');
+  return portal && id && secret ? { portal, id, secret } : null;
+}
 
 function search(url, allowed = {}) {
   const query = new URLSearchParams();

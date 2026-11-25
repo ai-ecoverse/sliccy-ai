@@ -3,7 +3,6 @@ import { DOWNLOAD_PATH, download } from './download.js';
 import { echo } from './echo.js';
 import { bounded, framed, SELF_FRAMED, unframed } from './frames.js';
 import { get } from './get.js';
-import { IMS_PATH, ims } from './ims.js';
 import { mcpcat } from './mcpcat.js';
 import { ntfy } from './ntfy.js';
 import { publish } from './publish.js';
@@ -234,10 +233,8 @@ async function published(env, url) {
 async function seven(request, env, url) {
   if (url.pathname.startsWith('/api/publish/')) return publish(request, env);
   if (url.pathname.startsWith('/api/serve/')) return api(request, env, url.pathname);
-  const adobe = url.pathname.startsWith(IMS_PATH)
-    ? ims
-    : url.pathname.startsWith(SUPPORT_PATH) && support;
-  if (adobe && (await published(env, url))) return adobe(request, env, url);
+  if (url.pathname.startsWith(SUPPORT_PATH) && (await published(env, url)))
+    return support(request, env, url);
   if (url.pathname === CLIENT_PATH && (await published(env, url)))
     return client(request, `https://${url.hostname}`);
   if (!readable(request)) {

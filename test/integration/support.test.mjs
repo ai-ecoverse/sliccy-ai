@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { adobe, PORTAL_BRANCHES, PORTAL_SEVEN, SAME } from './adobe.mjs';
+import { opspile, PORTAL_BRANCHES, PORTAL_SEVEN, SAME } from './opspile.mjs';
 
-const proxy = adobe();
+const proxy = opspile();
 const SEVEN = 'https://seven.sliccy.ai';
 const BRANCH = 'https://feat-shell.sliccy.ai';
 const TOKEN = 'eyJhbGciOiJSUzI1NiJ9.eyJ1c2VyX2lkIjoiQUJDIn0.c2ln-_';
@@ -333,7 +333,7 @@ test('anything else from upstream is unavailable, and a bare 429 is rate_limited
 });
 
 test('without its configuration a profile is unavailable and calls nobody', async () => {
-  const bare = adobe({
+  const bare = opspile({
     SUPPORT_ACCESS_SECRET_SEVEN: '',
     SUPPORT_PORTAL_BRANCHES: 'https://portal.example/path',
   });

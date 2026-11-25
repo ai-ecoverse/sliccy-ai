@@ -18,7 +18,6 @@
     { "binding": "BIOS", "bucket_name": "slicc-bios" },
     { "binding": "SERVE_STORAGE", "bucket_name": "sliccy-now-basic-storage" }
   ],
-  "vars": { "SUPPORT_IMS_SEVEN": "prod", "SUPPORT_IMS_BRANCHES": "stg1" },
   "version_metadata": { "binding": "VERSION" },
   "services": [
     { "binding": "V6", "service": "slicc-tray-hub" },
