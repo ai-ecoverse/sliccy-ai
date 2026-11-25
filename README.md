@@ -102,6 +102,8 @@ The request goes to `https://www.sliccy.ai/<path>`, so the join and controller U
 
 **Previews:** `*.sliccy.now` and the serve hub's API `/api/serve/*` are described in [Previews on sliccy.now](#previews-on-sliccynow-the-serve-hub).
 
+**Adobe Support:** signing in with Adobe IMS (`/auth/ims/*`) and the Support API (`/api/support/*`) on seven and branch hosts are described in [Adobe Support](#adobe-support).
+
 **A WebSocket echo for tests:** `wss://echo.sliccy.ai/` sends every message back, text and binary. Seven's integration tests use it as a public `wss://` target that SLICC controls, with Cloudflare's real certificate, so a client's certificate-chain check is tested without depending on a third party. The code is in [`src/echo.js`](src/echo.js).
 - **Subprotocols:** the first one offered is accepted.
 - **Limits:**
@@ -321,6 +323,117 @@ The route is `*.sliccy.now/*`, id `52e942a4b9924600b9c482245b55fa91`, zone `46d6
 - **Releases:** `wrangler.json` lists the route, and wrangler refuses to deploy a route another worker holds, so every release fails at the route step until a pull request removes the `*.sliccy.now/*` line.
 - **Going forward again:** reassign the route to `sliccy-ai` and restore the line, in that order.
 
+## Adobe Support
+
+Seven embeds Adobe Support: the Support panel on slicc-spectrum's `support` port ([slicc-spectrum#1008](https://github.com/ai-ecoverse/slicc-spectrum/pull/1008)). The user signs in with Adobe IMS on the page's own origin, and the page reaches Opspile's portal integration API (`/integrations/portal/v1`, adobe/helix-opspile's `docs/PORTAL-INTEGRATION.md`) through this worker, which adds the service credentials. The code is in [`src/ims.js`](src/ims.js) (sign-in), [`src/support.js`](src/support.js) (the API) and [`src/adobe.js`](src/adobe.js) (configuration and the shared checks).
+
+- **Where:** `seven.sliccy.ai` and every published branch host (one whose `branches/<label>.json` exists), at `/auth/ims/*` and `/api/support/*`. Vault hosts, service hosts, www (`/7/` included) and unpublished labels don't have them, and answer those paths as before.
+- **Two profiles:** `seven` for `seven.sliccy.ai` and `branches` for every branch preview. Each has its own IMS client, Opspile portal and Access service token. A preview runs unreviewed branch code, which can read any token signed in there, so `branches` uses IMS stg1 and Opspile's staging portal, and must never hold the production client or service token.
+- **Same origin only:** every call needs `Sec-Fetch-Site: same-origin`, and an `Origin`, if sent, must be the host's own; anything else is 403 `forbidden`. There are no CORS headers, and no cookies are read or set.
+- **Answers:** JSON, with `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and seven's frame headers. Errors have Opspile's v1 shape, `{"error":{"code":"…"}}`. The worker's own codes are:
+  - `invalid_input` (400);
+  - `invalid_assertion` (401, no bearer token or a malformed one);
+  - `forbidden` (403);
+  - `not_found` (404);
+  - `method_not_allowed` (405, with `Allow`);
+  - `sign_in_failed` (400 or 502);
+  - `unavailable` (503, also when the profile isn't configured).
+- **Nothing logged:** neither module logs. Tokens, codes and message text never go into a log or into a URL the worker builds, apart from the redirect to IMS.
+
+### Signing in with Adobe IMS
+
+The sign-in is OAuth 2 authorization code with PKCE, in a popup. The page keeps the PKCE verifier, `state` and `nonce` in memory, and the worker keeps the client secret. The code goes from the popup to the page, and it's useless without both.
+
+1. **Start:** in the click, so the popup isn't blocked, the page:
+   - makes a random `state` and `nonce` (22 to 128 base64url characters each), a verifier (43 to 128 characters) and its S256 `code_challenge`;
+   - listens on `BroadcastChannel('slicc-ims')` and for `message`;
+   - opens `GET /auth/ims/authorize?state=…&nonce=…&code_challenge=…` in a popup.
+
+   `&prompt=login` makes IMS ask for the account even when the browser is signed in, for "sign in with another account". Any other parameter, or one given twice, is 400.
+2. **Authorize:** the worker answers 302 to the profile's IMS `/ims/authorize/v2` with:
+   - its client ID, and the `redirect_uri` `https://<host>/auth/ims/callback`;
+   - the scope `AdobeID,openid,additional_info.ownerOrg`;
+   - `response_type=code`, `response_mode=query` and `code_challenge_method=S256`;
+   - the page's values.
+
+   The user signs in and picks a profile. Opspile maps that profile's organization (`ownerOrg`) to the customer.
+3. **Callback:** IMS sends the popup to `/auth/ims/callback?code=…&state=…` (or `error=…`).
+   - **The page:** it's static, with one inline script that a per-answer CSP nonce allows (`default-src 'none'`). The script takes the query off the URL with `history.replaceState`, sends `{ type: 'slicc-ims', state, code, error }` on `BroadcastChannel('slicc-ims')` and to `window.opener` with `postMessage(…, location.origin)`, and closes the window. Both reach this origin only.
+   - **Why the broadcast:** seven runs cross-origin isolated, and its `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from its opener once it visits IMS, so `window.opener` is `null` there.
+   - **The page that opened it** takes the first message with its own `state` (and, for `message`, its own `event.origin`) and ignores the rest.
+   - The code stays in the popup's history entry, unusable: IMS takes it once, and only with the page's verifier.
+4. **Token:** the page posts `{ code, verifier, nonce }` (JSON, at most 8 KiB) to `POST /auth/ims/token`. The worker:
+   - exchanges the code at IMS `/ims/token/v3` (`grant_type=authorization_code`, `code`, `code_verifier`);
+   - checks the ID token's `iss` (the profile's IMS), `aud` (its client ID), `nonce` (the page's) and `exp` (with a minute's leeway). The ID token comes straight from IMS over TLS, so its signature isn't checked again (OpenID Connect Core §3.1.3.7);
+   - reads `/ims/profile/v1` with the new token;
+   - answers `{ accessToken, expiresAt, user: { id, name, email }, org }`. `expiresAt` is in epoch ms, and `org` is the profile's `ownerOrg`, or `null` for a personal Adobe ID.
+
+   No refresh token is asked for (`offline_access`) or passed on. When the access token expires (after a day), the user signs in again.
+5. **Sign-out:** `POST /auth/ims/revoke` with `Authorization: Bearer <token>` revokes the token at IMS `/ims/revoke` and answers 204. If IMS can't be reached it answers 503, and the page forgets the token either way. Opspile notices within about a minute. The browser's own adobelogin.com session stays, so the next sign-in may not ask for a password; `prompt=login` makes it.
+
+- **The client:** with `IMS_CLIENT_SECRET_<PROFILE>` set, the worker is a confidential client (an "OAuth Web App" credential) and authenticates the exchange and the revocation with HTTP Basic. The secret is a Worker secret and never reaches the page. Without it, the worker is a public client ("OAuth Single Page App") and sends `client_id` instead. PKCE is used either way.
+- **Failures:**
+  - IMS refusing the code (a 4xx) is 400 `sign_in_failed`;
+  - an ID token that doesn't match is 502 `sign_in_failed`, and the access token isn't handed out;
+  - IMS 5xx, a failed profile read or a timeout (10 s) is 503 `unavailable`.
+
+### The Support API
+
+`/api/support/*` is a fixed map of Opspile's v1 operations. The page sends `Authorization: Bearer <IMS access token>`, the one from the sign-in.
+
+| call | goes to `<portal>/integrations/portal/v1` |
+|---|---|
+| `GET /api/support/threads?limit=&cursor=` | `GET /threads` (list) |
+| `POST /api/support/threads` `{ title, body, topic? }`, with `Idempotency-Key` | `POST /threads` (create) |
+| `GET /api/support/threads/<root>?limit=&cursor=` | `GET /threads/<root>` (detail) |
+| `POST /api/support/threads/<root>/replies` `{ body }`, with `Idempotency-Key` | `POST /threads/<root>/replies` (reply) |
+| `PUT /api/support/threads/<root>/read` `{ through }` | `PUT /threads/<root>/read` (read) |
+| `GET /api/support/changes?after=` | `GET /changes` (changes) |
+
+- **What's checked:** any other path is 404 and any other method 405. Then, before anything is sent:
+  - `<root>` is 1 to 128 of `A-Z a-z 0-9 . _ : -`;
+  - only the listed query parameters, once each: `limit` from 1 to 100, and `cursor` and `after` up to 2,048 printable ASCII characters;
+  - a body is `application/json`, at most 16 KiB, an object with only the listed string fields (`topic` is optional), and what's sent on is rebuilt from those fields;
+  - `Idempotency-Key` is 1 to 128 of `A-Z a-z 0-9 . _ : -`, and both POSTs need one;
+  - the bearer token is up to 8 KiB of base64url characters, `.`, `+`, `/`, `=` and `~`.
+
+  A failed check is 400 `invalid_input`, or 401 `invalid_assertion` for the token. Opspile checks the content itself (lengths, topics).
+- **What's sent:** only `Accept: application/json`, `Authorization: Bearer <the user's IMS token>` as issued, the profile's `CF-Access-Client-Id` and `CF-Access-Client-Secret`, and for writes `Content-Type: application/json` and the `Idempotency-Key`. No tenant, org, subject or email: Opspile verifies the IMS token itself and takes the organization from the IMS profile (its host-passed identity mode, with one host registration per profile). The request carries no cookies, follows no redirects and gives up after 15 s.
+- **What comes back:**
+  - a 2xx JSON answer, with its status. A create's `Location` becomes `/api/support/threads/<id>`, and any other `Location` is dropped;
+  - a v1 error, with its status, as `{"error":{"code"}}` and nothing else of its body;
+  - `rate_limited` for a 429 without one;
+  - 503 `unavailable` for anything else: an Access refusal or redirect, an answer that isn't JSON, a timeout.
+
+  `Retry-After` passes through on every answer. No other upstream header reaches the page.
+- **Enrollment:** Opspile has no status operation yet. `GET /api/support/threads?limit=1` is 200 when the signed-in profile is enrolled and 403 `not_enrolled` when it isn't, and 401 `invalid_assertion` means signing in again.
+
+### Configuration
+
+| name | kind | what |
+|---|---|---|
+| `SUPPORT_IMS_SEVEN`, `SUPPORT_IMS_BRANCHES` | vars in `wrangler.json` | the IMS: `prod` (`ims-na1.adobelogin.com`) for `seven`, `stg1` (`ims-na1-stg1.adobelogin.com`) for `branches` |
+| `IMS_CLIENT_ID_<PROFILE>` | secret | the IMS client ID |
+| `IMS_CLIENT_SECRET_<PROFILE>` | secret, optional | the client secret of an OAuth Web App credential |
+| `SUPPORT_PORTAL_<PROFILE>` | secret | the portal Worker's origin (`https://…`, no path) |
+| `SUPPORT_ACCESS_ID_<PROFILE>`, `SUPPORT_ACCESS_SECRET_<PROFILE>` | secrets | the Cloudflare Access service token Opspile registered for the profile |
+
+`<PROFILE>` is `SEVEN` or `BRANCHES`. Without its IMS client ID, a profile's sign-in answers 503 `unavailable`; without its portal and service token, its API does, and nothing is called. Client IDs and portal origins are secrets too: they go to Opspile's operator out of band, not into this repository. None is set yet.
+
+### Setting it up
+
+Support works once these manual steps are done:
+1. **IMS clients** in the Adobe Developer Console, one per profile: `seven` on IMS prod and `branches` on IMS stg1. Each is an OAuth Web App credential (or OAuth Single Page App, without a secret) with the scopes `AdobeID`, `openid` and `additional_info.ownerOrg`, and:
+   - **`seven`:** the default redirect URI `https://seven.sliccy.ai/auth/ims/callback`, and the redirect URI pattern `https://seven\.sliccy\.ai/auth/ims/callback`;
+   - **`branches`:** the redirect URI pattern `https://[a-z0-9-]+\.sliccy\.ai/auth/ims/callback`, and as the default redirect URI `https://seven.sliccy.ai/auth/ims/callback`, which the worker never asks for. A code sent to a host without the gateway goes nowhere, and one sent to another page is ignored, since its `state` isn't that page's.
+
+   Check with the first sign-in that IMS puts the `nonce` into the ID token and takes `code_verifier` from a Web App credential; the gateway refuses the sign-in otherwise.
+2. **Opspile:** a host registration per profile with IMS identity (`prod` for `seven` on the production portal, `stg1` for `branches` on the staging portal), listing that profile's client ID, each with its own Access service token, and the customers and members enrolled as PORTAL-INTEGRATION.md describes.
+3. **Secrets:** someone with the deploy token sets the profile's secrets above with `wrangler secret put <NAME>`, after the release that ships this. That command deploys the current version with them.
+4. **slicc-bios:** its `SupportPort`, and its service worker passing `/auth/ims/*` and `/api/support/*` to the network.
+
+Production seven on `www.sliccy.ai/7/` doesn't have Support yet. It would need these routes under `/7/`, a redirect URI of its own, and the `seven` profile.
+
 ## Develop
 
 ```sh
@@ -329,7 +442,7 @@ npm test
 npm run lint
 ```
 
-`npm test` runs the router in workerd through [Miniflare](https://github.com/cloudflare/workers-sdk/tree/main/packages/miniflare) against a local R2 bucket, using `wrangler.json` for the compatibility date and bindings. The serve hub's tests (`serve.test.mjs`) run the `ServeHost` Durable Object with a fake publisher ([`publisher.mjs`](test/integration/publisher.mjs)) that speaks the socket protocol, flow control included, and a stand-in `slicc-preview` behind `V6_PREVIEW`; `SERVE_LIMITS` (a JSON object, unset in production) shortens the hub's timeouts and bounds for them. The ntfy tests run the `NtfyHome` Durable Object and a stand-in `slicc-tray-hub` that exports a `SessionTrayDurableObject`, reached through the same cross-script binding as in production.
+`npm test` runs the router in workerd through [Miniflare](https://github.com/cloudflare/workers-sdk/tree/main/packages/miniflare) against a local R2 bucket, using `wrangler.json` for the compatibility date and bindings. The serve hub's tests (`serve.test.mjs`) run the `ServeHost` Durable Object with a fake publisher ([`publisher.mjs`](test/integration/publisher.mjs)) that speaks the socket protocol, flow control included, and a stand-in `slicc-preview` behind `V6_PREVIEW`; `SERVE_LIMITS` (a JSON object, unset in production) shortens the hub's timeouts and bounds for them. The ntfy tests run the `NtfyHome` Durable Object and a stand-in `slicc-tray-hub` that exports a `SessionTrayDurableObject`, reached through the same cross-script binding as in production. The Adobe Support tests (`ims.test.mjs`, `support.test.mjs`) answer IMS and the Opspile portal with Miniflare's `outboundService` ([`adobe.mjs`](test/integration/adobe.mjs)), with made-up secrets, and run the callback page's script against a stand-in window.
 
 `deploy.test.mjs` runs [`scripts/deploy.mjs`](scripts/deploy.mjs) against a stand-in wrangler and a fixture git repository with release tags, so the pull request deploy's choice of the stable version is tested without Cloudflare.
 
