@@ -456,3 +456,93 @@ test('www/7 uses the seven profile, and is unavailable without it', async () => 
   assert.deepEqual(await response.json(), { error: { code: 'unavailable' } });
   assert.equal(bare.seen.length, 0);
 });
+
+const refusal = async (error, status = 403) => {
+  upstream(status, { error });
+  const response = await call('threads?limit=1');
+  assert.equal(response.status, status);
+  assertPrivate(response);
+  return response.json();
+};
+
+test('not_enrolled passes a pending approval request on', async () => {
+  assert.deepEqual(await refusal({ code: 'not_enrolled', request: 'pending', reason: 'hidden' }), {
+    error: { code: 'not_enrolled', request: 'pending' },
+  });
+});
+
+test('not_enrolled passes a declined request on, with or without its reason', async () => {
+  assert.deepEqual(
+    await refusal({
+      code: 'not_enrolled',
+      request: 'declined',
+      reason: '  Ask Mara for access.  ',
+    }),
+    { error: { code: 'not_enrolled', request: 'declined', reason: 'Ask Mara for access.' } }
+  );
+  for (const reason of [undefined, '', '   ', 42, null, ['x'], { text: 'x' }, '\u0000\u0007']) {
+    assert.deepEqual(
+      await refusal({ code: 'not_enrolled', request: 'declined', reason }),
+      { error: { code: 'not_enrolled', request: 'declined' } },
+      JSON.stringify(reason)
+    );
+  }
+});
+
+test('a declined reason is stripped of control characters and capped at 500', async () => {
+  const { error } = await refusal({
+    code: 'not_enrolled',
+    request: 'declined',
+    reason: 'Line one.\r\n\tLine\u0000 two\u001b[31m\u007f\u0085 \u202eevil\u202c done',
+  });
+  assert.equal(error.reason, 'Line one. Line two[31m evil done');
+  const long = await refusal({
+    code: 'not_enrolled',
+    request: 'declined',
+    reason: `${'😀'.repeat(499)}ab${'x'.repeat(5000)}`,
+  });
+  assert.equal(Array.from(long.error.reason).length, 500);
+  assert.equal(long.error.reason, `${'😀'.repeat(499)}a`);
+});
+
+test('any other request value, or field, is dropped', async () => {
+  for (const request of [
+    'approved',
+    'Pending',
+    'pending ',
+    '',
+    1,
+    true,
+    null,
+    ['pending'],
+    undefined,
+  ]) {
+    assert.deepEqual(
+      await refusal({ code: 'not_enrolled', request, reason: 'x', detail: 'y' }),
+      { error: { code: 'not_enrolled' } },
+      JSON.stringify(request)
+    );
+  }
+});
+
+test('other codes keep only their code, whatever request they carry', async () => {
+  for (const [status, code] of [
+    [401, 'invalid_assertion'],
+    [403, 'forbidden'],
+    [404, 'not_found'],
+    [429, 'rate_limited'],
+  ]) {
+    assert.deepEqual(
+      await refusal({ code, request: 'declined', reason: 'the message text' }, status),
+      { error: { code } },
+      code
+    );
+  }
+});
+
+test('on www, the approval state passes on too', async () => {
+  upstream(403, { error: { code: 'not_enrolled', request: 'pending' } });
+  const response = await call('threads?limit=1', { origin: WWW, mount: '/7' });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: { code: 'not_enrolled', request: 'pending' } });
+});

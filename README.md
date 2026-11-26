@@ -369,12 +369,17 @@ Seven embeds Adobe Support: the Support panel on slicc-spectrum's `support` port
 - **What's sent:** only `Accept: application/json`, `Authorization: Bearer <the user's IMS token>` as issued, the profile's `CF-Access-Client-Id` and `CF-Access-Client-Secret`, and for writes `Content-Type: application/json` and the `Idempotency-Key`. No tenant, org, subject or email: Opspile verifies the IMS token itself and takes the organization from the IMS profile (its host-passed identity mode, with one host registration per profile). The request carries no cookies, follows no redirects and gives up after 15 s.
 - **What comes back:**
   - a 2xx JSON answer, with its status. A create's `Location` becomes `/api/support/threads/<id>`, and any other `Location` is dropped;
-  - a v1 error, with its status, as `{"error":{"code"}}` and nothing else of its body;
+  - a v1 error, with its status, as `{"error":{"code"}}` and nothing else of its body, except Opspile's approval state on `not_enrolled` (below);
   - `rate_limited` for a 429 without one;
   - 503 `unavailable` for anything else: an Access refusal or redirect, an answer that isn't JSON, a timeout.
 
   `Retry-After` passes through on every answer. No other upstream header reaches the page.
 - **Enrollment:** Opspile has no status operation yet. `GET /api/support/threads?limit=1` is 200 when the signed-in profile is enrolled and 403 `not_enrolled` when it isn't, and 401 `invalid_assertion` means signing in again (the token expired, was revoked, or isn't from a client Opspile accepts).
+- **Approval:** a `not_enrolled` error may also say where the person's access request stands (adobe/helix-opspile#689), and only these fields pass through:
+  - `"request":"pending"`: `{"error":{"code":"not_enrolled","request":"pending"}}`, waiting for an admin;
+  - `"request":"declined"`: `{"error":{"code":"not_enrolled","request":"declined","reason":"…"}}`. `reason` is optional: plain text an admin wrote for the person, and the page shows it as text. It passes through only as a string. Tabs and line breaks become a space, other control characters and bidirectional overrides are removed, and it's trimmed and cut to 500 characters. An empty one is left out.
+
+  Any other `request` value, a `reason` with `pending`, and `request` or `reason` on any other code are dropped, as is every other field.
 
 ### Configuration
 
