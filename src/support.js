@@ -7,6 +7,8 @@ const RETRY = /^[A-Za-z0-9 ,:+-]{1,64}$/;
 const CURSOR = /^[\x21-\x7e]{1,2048}$/;
 const LIMIT = /^(100|[1-9][0-9]?)$/;
 const MAX_BODY = 16384;
+const MAX_REASON = 500;
+const REQUESTS = new Set(['pending', 'declined']);
 const TIMEOUT_MS = 15_000;
 const paging = { limit: LIMIT, cursor: CURSOR };
 const OPERATIONS = [
@@ -53,7 +55,23 @@ async function input(request, max) {
 const answer = (status, body, headers = {}) =>
   Response.json(body, { status, headers: { ...PRIVATE, ...headers } });
 
-const failure = (status, code, headers = {}) => answer(status, { error: { code } }, headers);
+const failure = (status, code, headers = {}, extra = {}) =>
+  answer(status, { error: { code, ...extra } }, headers);
+
+function cleaned(reason) {
+  if (typeof reason !== 'string') return null;
+  const text = reason
+    .replace(/[\t\n\r]+/g, ' ')
+    .replace(/[\p{Cc}\u202a-\u202e\u2066-\u2069]/gu, '')
+    .trim();
+  return Array.from(text).slice(0, MAX_REASON).join('').trim() || null;
+}
+
+function approval(code, error) {
+  if (code !== 'not_enrolled' || !REQUESTS.has(error?.request)) return {};
+  const reason = error.request === 'declined' ? cleaned(error.reason) : null;
+  return reason ? { request: error.request, reason } : { request: error.request };
+}
 
 const origin = (url) => `https://${url.hostname}`;
 
@@ -138,7 +156,8 @@ async function relay(upstream, target, mount) {
     return answer(status, parsed, headers);
   }
   const code = parsed?.error?.code;
-  if (status >= 400 && status < 600 && is(CODE, code)) return failure(status, code, headers);
+  if (status >= 400 && status < 600 && is(CODE, code))
+    return failure(status, code, headers, approval(code, parsed.error));
   if (status === 429) return failure(429, 'rate_limited', headers);
   return failure(503, 'unavailable', headers);
 }
