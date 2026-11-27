@@ -1,0 +1,1931 @@
+{
+  "version": 1,
+  "kind": "synthetic service vectors for a dormant bounded opaque-record relay; opaque bytes only, no PAKE, no AEAD, no end-to-end claim",
+  "contract": {
+    "start": "mailbox creation by POST /v1/open; the endpoints open it at the owner's Prepare to send, which the relay cannot observe",
+    "timeout": "one absolute deadline, creation plus MAX_TTL_SECONDS (relay/src/wire.js), checked on every request and by one alarm; an optional earlier deadline only shortens it; no caller TTL, no slack, no renewal, no reopen",
+    "metering": "per-source open, put and take rate limits; a per-id poll rate limit; per-mailbox budgets for total requests, empty reads, refused operations and wrong tokens; no poll, read, write or retry resets or extends any budget or the deadline",
+    "channel": "https only, an exact allowlist of two origins, short polling, JSON bodies only",
+    "authentication": "the CORS and token checks are not end-to-end user authentication; that is the supervisor ceremony and the key agreement, which this changeset does not implement",
+    "failure": "a 503 failed answer is an unknown outcome: it is not proof that nothing was inserted or consumed; the relay never retries, resends or replays"
+  },
+  "notation": {
+    "placeholders": "a string \"$name\" in a request is replaced by the value bound to name; in a response it binds name on first use and must equal it afterwards",
+    "constants": {
+      "$RETRY_AFTER_MS": "LIMITS.retryAfterMs in relay/src/wire.js",
+      "$CREATED": "the relay clock when the scenario starts; its first open happens then",
+      "$DEADLINE": "$CREATED plus MAX_TTL_SECONDS (relay/src/wire.js) in milliseconds: the one absolute session deadline"
+    },
+    "expressions": "a string \"$NAME+N\" is the bound number NAME plus N",
+    "clock": "a step {\"clock\": {\"from\": \"creation\" | \"deadline\", \"offsetMs\": n}} sets the relay clock (the synthetic harness) or waits until that time (a live client) before the next step",
+    "origin": "a step without origin uses defaultOrigin",
+    "encoding": "data, slot, verifier and token are unpadded base64url; data decodes to one whole envelope of an allowed size"
+  },
+  "host": "https://<mailbox-host>",
+  "defaultOrigin": "https://lease-pilot.sliccy.ai",
+  "origins": ["https://lease-pilot.sliccy.ai", "https://seven.sliccy.ai"],
+  "envelopeSizes": [128, 256, 1024, 4096],
+  "tokens": [
+    {
+      "token": "cAEZQ_406zoGpMAvG-HT0ygSAw_SiB8uBhgnXp0xPNo",
+      "verifier": "Dx1q6AwnWeIq_MfkolAV19DcS4LrRo7wwa_IX2qDNnw"
+    },
+    {
+      "token": "dB-_6_7YkUH_-OJkLsUmS68UZK2o5ZNPTamrivxGfNc",
+      "verifier": "BrnVkztxuCtKTdHqJc-XADCUCUH9H2hYjfagr-4dE80"
+    },
+    {
+      "token": "nfkkk0XfPslPP2TPB7xEZGg9z9Y3j6Jz0fxdqunfJpo",
+      "verifier": "L9aPV-49qb9kMGu_CI9VDDvgxf1V9u-Sz8wl7RWeLKo"
+    },
+    {
+      "token": "M6-mbEcIqN647IsMBp2qOixF5FLXpjPUwpO82la9TL8",
+      "verifier": "dFhgOx1M_3DjpNkOUFEN9ailtMRUtRnwmT9vGeDwBpo"
+    }
+  ],
+  "clientDerivations": {
+    "status": "documentation only: obligations of the BIOS supervisor and agent-worker owners, proposed labels for their review; the relay implements none of it and no PAKE is approved",
+    "kdf": "HKDF-SHA-256",
+    "ikm": "the PAKE session key after explicit key confirmation",
+    "salt": "the mailbox id as ASCII",
+    "lengths": {
+      "slot": 16,
+      "token": 32,
+      "key": 32
+    },
+    "info": {
+      "audienceSlot": "sliccy-relay/v1 slot audience worker-to-supervisor",
+      "audienceToken": "sliccy-relay/v1 token audience worker-to-supervisor",
+      "excerptSlot": "sliccy-relay/v1 slot excerpt supervisor-to-worker",
+      "excerptToken": "sliccy-relay/v1 token excerpt supervisor-to-worker",
+      "receiptSlot": "sliccy-relay/v1 slot receipt worker-to-supervisor",
+      "receiptToken": "sliccy-relay/v1 token receipt worker-to-supervisor",
+      "keyWorkerToSupervisor": "sliccy-relay/v1 aead worker-to-supervisor",
+      "keySupervisorToWorker": "sliccy-relay/v1 aead supervisor-to-worker"
+    },
+    "setupSlots": "unverified PAKE setup slot ids are SHA-256(\"sliccy-relay/v1 setup \" || role || \" \" || round || \" \" || mailbox id) truncated to 16 bytes; never derived from the short human code",
+    "transcript": [
+      "mailbox id",
+      "supervisor origin",
+      "worker origin",
+      "audience generation",
+      "epoch",
+      "SHA-256 of the exact selected bytes"
+    ],
+    "envelope": "nonce, version byte, AEAD ciphertext and tag, padded so that the whole envelope is exactly one allowed size; the excerpt plaintext is at most 2048 UTF-8 bytes inside a 4 KiB envelope"
+  },
+  "scenarios": [
+    {
+      "name": "open takes no payload and no caller TTL; the deadline is creation plus MAX_TTL_SECONDS",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1,
+              "ttlSeconds": 60
+            }
+          },
+          "response": {
+            "status": 400,
+            "body": {
+              "v": 1,
+              "error": "invalid"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1,
+              "data": "GD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnM"
+            }
+          },
+          "response": {
+            "status": 400,
+            "body": {
+              "v": 1,
+              "error": "invalid"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "empty": true,
+              "retryAfterMs": "$RETRY_AFTER_MS"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "absolute expiry: everything works just before the deadline and nothing at it",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fY"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "data": "m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdg",
+              "verifier": "Dx1q6AwnWeIq_MfkolAV19DcS4LrRo7wwa_IX2qDNnw"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "clock": {
+            "from": "deadline",
+            "offsetMs": -1
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "data": "m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fY"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "8Y3r5cK-VPrJbj7C6ynKqA",
+              "data": "HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHk"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "clock": {
+            "from": "deadline",
+            "offsetMs": 0
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "token": "cAEZQ_406zoGpMAvG-HT0ygSAw_SiB8uBhgnXp0xPNo"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "-53u_A9GEj4escIZgXv6Tg"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "_TTZnF4j9dpGwke95JEy3Q",
+              "data": "ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_w"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "clock": {
+            "from": "deadline",
+            "offsetMs": 1000
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "delayed setup and activity never extend the deadline: no renewal by put, take, poll or retry",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "clock": {
+            "from": "creation",
+            "offsetMs": 100000
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn8"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "clock": {
+            "from": "creation",
+            "offsetMs": 110000
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "data": "JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn8"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "7zyVpNmNEe6i2MWiQ6v2Ww"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "empty": true,
+              "retryAfterMs": "$RETRY_AFTER_MS"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "data": "JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_w",
+              "verifier": "Dx1q6AwnWeIq_MfkolAV19DcS4LrRo7wwa_IX2qDNnw"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "token": "dB-_6_7YkUH_-OJkLsUmS68UZK2o5ZNPTamrivxGfNc"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn8"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "clock": {
+            "from": "deadline",
+            "offsetMs": -1
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "7zyVpNmNEe6i2MWiQ6v2Ww"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "empty": true,
+              "retryAfterMs": "$RETRY_AFTER_MS"
+            }
+          }
+        },
+        {
+          "clock": {
+            "from": "deadline",
+            "offsetMs": 0
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "7zyVpNmNEe6i2MWiQ6v2Ww"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "an earlier deadline shortens the session; a later one does not lengthen it",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1,
+              "deadline": "$CREATED+5000"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$short",
+              "expiresAt": "$CREATED+5000"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1,
+              "deadline": "$CREATED+86400000"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$long",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1,
+              "deadline": "$CREATED+0"
+            }
+          },
+          "response": {
+            "status": 400,
+            "body": {
+              "v": 1,
+              "error": "invalid"
+            }
+          }
+        },
+        {
+          "clock": {
+            "from": "creation",
+            "offsetMs": 4999
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$short",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "empty": true,
+              "retryAfterMs": "$RETRY_AFTER_MS"
+            }
+          }
+        },
+        {
+          "clock": {
+            "from": "creation",
+            "offsetMs": 5000
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$short",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$long",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "empty": true,
+              "retryAfterMs": "$RETRY_AFTER_MS"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "no consume, replay or reopen on a late message",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "p8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgg",
+              "verifier": "Dx1q6AwnWeIq_MfkolAV19DcS4LrRo7wwa_IX2qDNnw",
+              "final": true
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "clock": {
+            "from": "deadline",
+            "offsetMs": 0
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "token": "cAEZQ_406zoGpMAvG-HT0ygSAw_SiB8uBhgnXp0xPNo"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "clock": {
+            "from": "deadline",
+            "offsetMs": -1
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "token": "cAEZQ_406zoGpMAvG-HT0ygSAw_SiB8uBhgnXp0xPNo"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "data": "p8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QI"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "session: setup, audience, excerpt, receipt; only the reserved receipt slot is writable after the excerpt take",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://lease-pilot.sliccy.ai",
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbo"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://lease-pilot.sliccy.ai",
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "empty": true,
+              "retryAfterMs": "$RETRY_AFTER_MS"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "data": "4gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD0"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "data": "X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbo"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://lease-pilot.sliccy.ai",
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "data": "4gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD0"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "data": "X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbo"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "8Y3r5cK-VPrJbj7C6ynKqA",
+              "data": "ZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQA",
+              "verifier": "Dx1q6AwnWeIq_MfkolAV19DcS4LrRo7wwa_IX2qDNnw"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://lease-pilot.sliccy.ai",
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "8Y3r5cK-VPrJbj7C6ynKqA",
+              "token": "cAEZQ_406zoGpMAvG-HT0ygSAw_SiB8uBhgnXp0xPNo"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "data": "ZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQA"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://lease-pilot.sliccy.ai",
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "8Y3r5cK-VPrJbj7C6ynKqA",
+              "token": "cAEZQ_406zoGpMAvG-HT0ygSAw_SiB8uBhgnXp0xPNo"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://lease-pilot.sliccy.ai",
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "-53u_A9GEj4escIZgXv6Tg",
+              "data": "6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmeww",
+              "verifier": "BrnVkztxuCtKTdHqJc-XADCUCUH9H2hYjfagr-4dE80",
+              "final": true,
+              "reserve": ["_TTZnF4j9dpGwke95JEy3Q"]
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "-53u_A9GEj4escIZgXv6Tg",
+              "token": "dB-_6_7YkUH_-OJkLsUmS68UZK2o5ZNPTamrivxGfNc"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "data": "6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmeww"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "krRLn8zUGsE7e42sCFoFOQ",
+              "data": "7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEk"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "-53u_A9GEj4escIZgXv6Tg",
+              "token": "dB-_6_7YkUH_-OJkLsUmS68UZK2o5ZNPTamrivxGfNc"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "_TTZnF4j9dpGwke95JEy3Q",
+              "data": "a5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRg",
+              "verifier": "L9aPV-49qb9kMGu_CI9VDDvgxf1V9u-Sz8wl7RWeLKo"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "_TTZnF4j9dpGwke95JEy3Q",
+              "data": "a5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRg",
+              "verifier": "L9aPV-49qb9kMGu_CI9VDDvgxf1V9u-Sz8wl7RWeLKo"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://lease-pilot.sliccy.ai",
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "_TTZnF4j9dpGwke95JEy3Q",
+              "token": "nfkkk0XfPslPP2TPB7xEZGg9z9Y3j6Jz0fxdqunfJpo"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "data": "a5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRg"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://lease-pilot.sliccy.ai",
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "empty polls answer empty with retryAfterMs and burn nothing",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "empty": true,
+              "retryAfterMs": "$RETRY_AFTER_MS"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "token": "cAEZQ_406zoGpMAvG-HT0ygSAw_SiB8uBhgnXp0xPNo"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "empty": true,
+              "retryAfterMs": "$RETRY_AFTER_MS"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "cZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8w",
+              "verifier": "Dx1q6AwnWeIq_MfkolAV19DcS4LrRo7wwa_IX2qDNnw"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "token": "cAEZQ_406zoGpMAvG-HT0ygSAw_SiB8uBhgnXp0xPNo"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "data": "cZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8w"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a wrong token burns one attempt only; the right token still reads",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqzw",
+              "verifier": "Dx1q6AwnWeIq_MfkolAV19DcS4LrRo7wwa_IX2qDNnw"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "token": "dB-_6_7YkUH_-OJkLsUmS68UZK2o5ZNPTamrivxGfNc"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "token": "cAEZQ_406zoGpMAvG-HT0ygSAw_SiB8uBhgnXp0xPNo"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "data": "9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqzw"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "five wrong tokens destroy the mailbox",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "d5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdI"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "data": "d5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUg",
+              "verifier": "Dx1q6AwnWeIq_MfkolAV19DcS4LrRo7wwa_IX2qDNnw"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "token": "dB-_6_7YkUH_-OJkLsUmS68UZK2o5ZNPTamrivxGfNc"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "token": "nfkkk0XfPslPP2TPB7xEZGg9z9Y3j6Jz0fxdqunfJpo"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "token": "M6-mbEcIqN647IsMBp2qOixF5FLXpjPUwpO82la9TL8"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "token": "dB-_6_7YkUH_-OJkLsUmS68UZK2o5ZNPTamrivxGfNc"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "token": "nfkkk0XfPslPP2TPB7xEZGg9z9Y3j6Jz0fxdqunfJpo"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "token": "cAEZQ_406zoGpMAvG-HT0ygSAw_SiB8uBhgnXp0xPNo"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "write-once slots",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFU"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "faLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9g"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "faLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9g",
+              "verifier": "Dx1q6AwnWeIq_MfkolAV19DcS4LrRo7wwa_IX2qDNnw"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "data": "-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFU"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "only whole-envelope sizes; 4 KiB + 1 and base64 framing mistakes are refused",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "ACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22w"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "data": "ACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wA"
+            }
+          },
+          "response": {
+            "status": 400,
+            "body": {
+              "v": 1,
+              "error": "invalid"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "8Y3r5cK-VPrJbj7C6ynKqA",
+              "data": "ACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHWav-QJLlN4ncLnDDFWe6DF6g80WX6jyO0SN1yBpsvwFTpfhKnO8xg9Yoes0fYbQGWKr9T5HkNojbLX_CFGa5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG2"
+            }
+          },
+          "response": {
+            "status": 400,
+            "body": {
+              "v": 1,
+              "error": "invalid"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "-53u_A9GEj4escIZgXv6Tg",
+              "data": "ACVKb5S53gMoTXKXvOEGK1B1mr/kCS5TeJ3C5wwxVnugxeoPNFl+o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq/U+R5DaI2y1/whRmuQtdr/JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep/E6Q4zWH2ix+wRNls="
+            }
+          },
+          "response": {
+            "status": 400,
+            "body": {
+              "v": 1,
+              "error": "invalid"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "_TTZnF4j9dpGwke95JEy3Q",
+              "data": "QUNWS2I1UzUzZ01vVFhLWHZPRUdLMUIxbXJfa0NTNVRlSjNDNXd3eFZudWd4ZW9QTkZsLW84anRFamRjZ2FiTDhCVTZYNFNwenZNWVBXS0hyTkgyRzBCbGlxX1UtUjVEYUkyeTFfd2hSbXVRdGRyX0pFbHVrN2pkQWlkTWNaYTc0QVVxVDNTWnZ1TUlMVkozbk1IbUN6QlZlcF9FNlE0eldIMml4LXdSTmx1QXBjcnZGRGxlZzZqTjhoYzhZWWFyMFBVYVAyU0pydFA0SFVKbmpMSFcteUJGYW8tMDJmNGpTRzJTdDl3QkprdHdsYnJmQkNsT2M1aTk0Z2NzVVhhYndPVUtMMVI1bnNQb0RUSlhmS0hHNnhBMVduLWt5ZTRUT0YyQ3A4enhGanRnaGFyUDlCay1ZNGl0MHZjY1FXYUxzTlg2SDBScGpyUFlfU0pIYkpHMjJ3QWxTbS1VdWQ0REtFMXlsN3poQml0UWRacV81QWt1VTNpZHd1Y01NVlo3b01YcUR6UlpmcVBJN1JJM1hJR215X0FWT2wtRXFjN3pHRDFpaDZ6UjlodEFaWXF2MVBrZVEyaU5zdGY4SVVacmtMWGFfeVJKYnBPNDNRSW5USEdXdS1BRktrOTBtYjdqQ0MxU2Q1ekI1Z3N3VlhxZnhPa09NMWg5b3Nmc0VUWmJnS1hLN3hRNVhvT296ZklYUEdHR3E5RDFHajlraWE3VC1CMUNaNHl4MXZzZ1JXcVB0Tm4tSTBodGtyZmNBU1pMY0pXNjN3UXBUbk9ZdmVJSExGRjJtOERsQ2k5VWVaN0Q2QTB5VjN5aHh1c1FOVnBfcE1udUV6aGRncWZNOFJZN1lJV3F6X1FaUG1PSXJkTDNIRUZtaTdEVi1oOUVhWTZ6MlAwaVIyeVJ0dHNBSlVwdmxMbmVBeWhOY3BlODRRWXJVSFdhdi1RSkxsTjRuY0xuRERGV2U2REY2ZzgwV1g2anlPMFNOMXlCcHN2d0ZUcGZoS25POHhnOVlvZXMwZlliUUdXS3I5VDVIa05vamJMWF9DRkdhNUMxMnY4a1NXNlR1TjBDSjB4eGxydmdCU3BQZEptLTR3Z3RVbmVjd2VZTE1GVjZuOFRwRGpOWWZhTEg3QkUyVzRDbHl1OFVPVjZEcU0zeUZ6eGhocXZROVJvX1pJbXUwX2dkUW1lTXNkYjdJRVZxajdUWl9pTkliWkszM0FFbVMzQ1Z1dDhFS1U1em1MM2lCeXhSZHB2QTVRb3ZWSG1ldy1nTk1sZDhvY2JyRURWYWY2VEo3aE00WFlLbnpQRVdPMkNGcXNfMEdUNWppSzNTOXh4QlpvdXcxZm9mUkdtT3M5ajlJa2Rza2JiYkFDVktiNVM1M2dNb1RYS1h2T0VHSzFCMW1yX2tDUzVUZUozQzV3d3hWbnVneGVvUE5GbC1vOGp0RWpkY2dhYkw4QlU2WDRTcHp2TVlQV0tIck5IMkcwQmxpcV9VLVI1RGFJMnkxX3doUm11UXRkcl9KRWx1azdqZEFpZE1jWmE3NEFVcVQzU1p2dU1JTFZKM25NSG1DekJWZXBfRTZRNHpXSDJpeC13Uk5sdUFwY3J2RkRsZWc2ak44aGM4WVlhcjBQVWFQMlNKcnRQNEhVSm5qTEhXLXlCRmFvLTAyZjRqU0cyU3Q5d0JKa3R3bGJyZkJDbE9jNWk5NGdjc1VYYWJ3T1VLTDFSNW5zUG9EVEpYZktIRzZ4QTFXbi1reWU0VE9GMkNwOHp4Rmp0Z2hhclA5QmstWTRpdDB2Y2NRV2FMc05YNkgwUnBqclBZX1NKSGJKRzIyd0FsU20tVXVkNERLRTF5bDd6aEJpdFFkWnFfNUFrdVUzaWR3dWNNTVZaN29NWHFEelJaZnFQSTdSSTNYSUdteV9BVk9sLUVxYzd6R0QxaWg2elI5aHRBWllxdjFQa2VRMmlOc3RmOElVWnJrTFhhX3lSSmJwTzQzUUluVEhHV3UtQUZLazkwbWI3akNDMVNkNXpCNWdzd1ZYcWZ4T2tPTTFoOW9zZnNFVFpiZ0tYSzd4UTVYb09vemZJWFBHR0dxOUQxR2o5a2lhN1QtQjFDWjR5eDF2c2dSV3FQdE5uLUkwaHRrcmZjQVNaTGNKVzYzd1FwVG5PWXZlSUhMRkYybThEbENpOVVlWjdENkEweVYzeWh4dXNRTlZwX3BNbnVFemhkZ3FmTThSWTdZSVdxel9RWlBtT0lyZEwzSEVGbWk3RFYtaDlFYVk2ejJQMGlSMnlSdHRzQUpVcHZsTG5lQXloTmNwZTg0UVlyVUhXYXYtUUpMbE40bmNMbkRERldlNkRGNmc4MFdYNmp5TzBTTjF5QnBzdndGVHBmaEtuTzh4ZzlZb2VzMGZZYlFHV0tyOVQ1SGtOb2piTFhfQ0ZHYTVDMTJ2OGtTVzZUdU4wQ0oweHhscnZnQlNwUGRKbS00d2d0VW5lY3dlWUxNRlY2bjhUcERqTllmYUxIN0JFMlc0Q2x5dThVT1Y2RHFNM3lGenhoaHF2UTlSb19aSW11MF9nZFFtZU1zZGI3SUVWcWo3VFpfaU5JYlpLMzNBRW1TM0NWdXQ4RUtVNXptTDNpQnl4UmRwdkE1UW92VkhtZXctZ05NbGQ4b2NickVEVmFmNlRKN2hNNFhZS256UEVXTzJDRnFzXzBHVDVqaUszUzl4eEJab3V3MWZvZlJHbU9zOWo5SWtkc2tiYmJBQ1ZLYjVTNTNnTW9UWEtYdk9FR0sxQjFtcl9rQ1M1VGVKM0M1d3d4Vm51Z3hlb1BORmwtbzhqdEVqZGNnYWJMOEJVNlg0U3B6dk1ZUFdLSHJOSDJHMEJsaXFfVS1SNURhSTJ5MV93aFJtdVF0ZHJfSkVsdWs3amRBaWRNY1phNzRBVXFUM1NadnVNSUxWSjNuTUhtQ3pCVmVwX0U2UTR6V0gyaXgtd1JObHVBcGNydkZEbGVnNmpOOGhjOFlZYXIwUFVhUDJTSnJ0UDRIVUpuakxIVy15QkZhby0wMmY0alNHMlN0OXdCSmt0d2xicmZCQ2xPYzVpOTRnY3NVWGFid09VS0wxUjVuc1BvRFRKWGZLSEc2eEExV24ta3llNFRPRjJDcDh6eEZqdGdoYXJQOUJrLVk0aXQwdmNjUVdhTHNOWDZIMFJwanJQWV9TSkhiSkcyMndBbFNtLVV1ZDRES0UxeWw3emhCaXRRZFpxXzVBa3VVM2lkd3VjTU1WWjdvTVhxRHpSWmZxUEk3UkkzWElHbXlfQVZPbC1FcWM3ekdEMWloNnpSOWh0QVpZcXYxUGtlUTJpTnN0ZjhJVVpya0xYYV95UkpicE80M1FJblRIR1d1LUFGS2s5MG1iN2pDQzFTZDV6QjVnc3dWWHFmeE9rT00xaDlvc2ZzRVRaYmdLWEs3eFE1WG9Pb3pmSVhQR0dHcTlEMUdqOWtpYTdULUIxQ1o0eXgxdnNnUldxUHRObi1JMGh0a3JmY0FTWkxjSlc2M3dRcFRuT1l2ZUlITEZGMm04RGxDaTlVZVo3RDZBMHlWM3loeHVzUU5WcF9wTW51RXpoZGdxZk04Ulk3WUlXcXpfUVpQbU9JcmRMM0hFRm1pN0RWLWg5RWFZNnoyUDBpUjJ5UnR0c0FKVXB2bExuZUF5aE5jcGU4NFFZclVIV2F2LVFKTGxONG5jTG5EREZXZTZERjZnODBXWDZqeU8wU04xeUJwc3Z3RlRwZmhLbk84eGc5WW9lczBmWWJRR1dLcjlUNUhrTm9qYkxYX0NGR2E1QzEydjhrU1c2VHVOMENKMHh4bHJ2Z0JTcFBkSm0tNHdndFVuZWN3ZVlMTUZWNm44VHBEak5ZZmFMSDdCRTJXNENseXU4VU9WNkRxTTN5Rnp4aGhxdlE5Um9fWkltdTBfZ2RRbWVNc2RiN0lFVnFqN1RaX2lOSWJaSzMzQUVtUzNDVnV0OEVLVTV6bUwzaUJ5eFJkcHZBNVFvdlZIbWV3LWdOTWxkOG9jYnJFRFZhZjZUSjdoTTRYWUtuelBFV08yQ0Zxc18wR1Q1amlLM1M5eHhCWm91dzFmb2ZSR21PczlqOUlrZHNrYmJiQUNWS2I1UzUzZ01vVFhLWHZPRUdLMUIxbXJfa0NTNVRlSjNDNXd3eFZudWd4ZW9QTkZsLW84anRFamRjZ2FiTDhCVTZYNFNwenZNWVBXS0hyTkgyRzBCbGlxX1UtUjVEYUkyeTFfd2hSbXVRdGRyX0pFbHVrN2pkQWlkTWNaYTc0QVVxVDNTWnZ1TUlMVkozbk1IbUN6QlZlcF9FNlE0eldIMml4LXdSTmx1QXBjcnZGRGxlZzZqTjhoYzhZWWFyMFBVYVAyU0pydFA0SFVKbmpMSFcteUJGYW8tMDJmNGpTRzJTdDl3QkprdHdsYnJmQkNsT2M1aTk0Z2NzVVhhYndPVUtMMVI1bnNQb0RUSlhmS0hHNnhBMVduLWt5ZTRUT0YyQ3A4enhGanRnaGFyUDlCay1ZNGl0MHZjY1FXYUxzTlg2SDBScGpyUFlfU0pIYkpHMjJ3QWxTbS1VdWQ0REtFMXlsN3poQml0UWRacV81QWt1VTNpZHd1Y01NVlo3b01YcUR6UlpmcVBJN1JJM1hJR215X0FWT2wtRXFjN3pHRDFpaDZ6UjlodEFaWXF2MVBrZVEyaU5zdGY4SVVacmtMWGFfeVJKYnBPNDNRSW5USEdXdS1BRktrOTBtYjdqQ0MxU2Q1ekI1Z3N3VlhxZnhPa09NMWg5b3Nmc0VUWmJnS1hLN3hRNVhvT296ZklYUEdHR3E5RDFHajlraWE3VC1CMUNaNHl4MXZzZ1JXcVB0Tm4tSTBodGtyZmNBU1pMY0pXNjN3UXBUbk9ZdmVJSExGRjJtOERsQ2k5VWVaN0Q2QTB5VjN5aHh1c1FOVnBfcE1udUV6aGRncWZNOFJZN1lJV3F6X1FaUG1PSXJkTDNIRUZtaTdEVi1oOUVhWTZ6MlAwaVIyeVJ0dHNBSlVwdmxMbmVBeWhOY3BlODRRWXJVSFdhdi1RSkxsTjRuY0xuRERGV2U2REY2ZzgwV1g2anlPMFNOMXlCcHN2d0ZUcGZoS25POHhnOVlvZXMwZlliUUdXS3I5VDVIa05vamJMWF9DRkdhNUMxMnY4a1NXNlR1TjBDSjB4eGxydmdCU3BQZEptLTR3Z3RVbmVjd2VZTE1GVjZuOFRwRGpOWWZhTEg3QkUyVzRDbHl1OFVPVjZEcU0zeUZ6eGhocXZROVJvX1pJbXUwX2dkUW1lTXNkYjdJRVZxajdUWl9pTkliWkszM0FFbVMzQ1Z1dDhFS1U1em1MM2lCeXhSZHB2QTVRb3ZWSG1ldy1nTk1sZDhvY2JyRURWYWY2VEo3aE00WFlLbnpQRVdPMkNGcXNfMEdUNWppSzNTOXh4QlpvdXcxZm9mUkdtT3M5ajlJa2Rza2JiYkFDVktiNVM1M2dNb1RYS1h2T0VHSzFCMW1yX2tDUzVUZUozQzV3d3hWbnVneGVvUE5GbC1vOGp0RWpkY2dhYkw4QlU2WDRTcHp2TVlQV0tIck5IMkcwQmxpcV9VLVI1RGFJMnkxX3doUm11UXRkcl9KRWx1azdqZEFpZE1jWmE3NEFVcVQzU1p2dU1JTFZKM25NSG1DekJWZXBfRTZRNHpXSDJpeC13Uk5sdUFwY3J2RkRsZWc2ak44aGM4WVlhcjBQVWFQMlNKcnRQNEhVSm5qTEhXLXlCRmFvLTAyZjRqU0cyU3Q5d0JKa3R3bGJyZkJDbE9jNWk5NGdjc1VYYWJ3T1VLTDFSNW5zUG9EVEpYZktIRzZ4QTFXbi1reWU0VE9GMkNwOHp4Rmp0Z2hhclA5QmstWTRpdDB2Y2NRV2FMc05YNkgwUnBqclBZX1NKSGJKRzIyd0FsU20tVXVkNERLRTF5bDd6aEJpdFFkWnFfNUFrdVUzaWR3dWNNTVZaN29NWHFEelJaZnFQSTdSSTNYSUdteV9BVk9sLUVxYzd6R0QxaWg2elI5aHRBWllxdjFQa2VRMmlOc3RmOElVWnJrTFhhX3lSSmJwTzQzUUluVEhHV3UtQUZLazkwbWI3akNDMVNkNXpCNWdzd1ZYcWZ4T2tPTTFoOW9zZnNFVFpiZ0tYSzd4UTVYb09vemZJWFBHR0dxOUQxR2o5a2lhN1QtQjFDWjR5eDF2c2dSV3FQdE5uLUkwaHRrcmZjQVNaTGNKVzYzd1FwVG5PWXZlSUhMRkYybThEbENpOVVlWjdENkEweVYzeWh4dXNRTlZwX3BNbnVFemhkZ3FmTThSWTdZSVdxel9RWlBtT0lyZEwzSEVGbWk3RFYtaDlFYVk2ejJQMGlSMnlSdHRzQUpVcHZsTG5lQXloTmNwZTg0UVlyVUhXYXYtUUpMbE40bmNMbkRERldlNkRGNmc4MFdYNmp5TzBTTjF5QnBzdndGVHBmaEtuTzh4ZzlZb2VzMGZZYlFHV0tyOVQ1SGtOb2piTFhfQ0ZHYTVDMTJ2OGtTVzZUdU4wQ0oweHhscnZnQlNwUGRKbS00d2d0VW5lY3dlWUxNRlY2bjhUcERqTllmYUxIN0JFMlc0Q2x5dThVT1Y2RHFNM3lGenhoaHF2UTlSb19aSW11MF9nZFFtZU1zZGI3SUVWcWo3VFpfaU5JYlpLMzNBRW1TM0NWdXQ4RUtVNXptTDNpQnl4UmRwdkE1UW92VkhtZXctZ05NbGQ4b2NickVEVmFmNlRKN2hNNFhZS256UEVXTzJDRnFzXzBHVDVqaUszUzl4eEJab3V3MWZvZlJHbU9zOWo5SWtkc2tiYmJBQ1ZLYjVTNTNnTW9UWEtYdk9FR0sxQjFtcl9rQ1M1VGVKM0M1d3d4Vm51Z3hlb1BORmwtbzhqdEVqZGNnYWJMOEJVNlg0U3B6dk1ZUFdLSHJOSDJHMEJsaXFfVS1SNURhSTJ5MV93aFJtdVF0ZHJfSkVsdWs3amRBaWRNY1phNzRBVXFUM1NadnVNSUxWSjNuTUhtQ3pCVmVwX0U2UTR6V0gyaXgtd1JObHVBcGNydkZEbGVnNmpOOGhjOFlZYXIwUFVhUDJTSnJ0UDRIVUpuakxIVy15QkZhby0wMmY0alNHMlN0OXdCSmt0d2xicmZCQ2xPYzVpOTRnY3NVWGFid09VS0wxUjVuc1BvRFRKWGZLSEc2eEExV24ta3llNFRPRjJDcDh6eEZqdGdoYXJQOUJrLVk0aXQwdmNjUVdhTHNOWDZIMFJwanJQWV9TSkhiSkcyMnc"
+            }
+          },
+          "response": {
+            "status": 400,
+            "body": {
+              "v": 1,
+              "error": "invalid"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "krRLn8zUGsE7e42sCFoFOQ",
+              "data": "ACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRmuQtdr_JEluk7jdAidMcZa74AUqT3SZvuMILVJ3nMHmCzBVep_E6Q4zWH2ix-wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4DKE1yl7zhBitQdZq_5AkuU3idwucMMVZ7oMXqDzRZfqPI7RI3XIGmy_AVOl-Eqc7zGD1ih6zR9htAZYqv1PkeQ2iNstf8IUZrkLXa_yRJbpO43QInTHGWu-AFKk90mb7jCC1Sd5zB5gswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIXPGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOYveIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY7YIWqz_QZPmOIrdL3HEFmi7DV-h9EaY6z2P0iR2yRtts"
+            }
+          },
+          "response": {
+            "status": 400,
+            "body": {
+              "v": 1,
+              "error": "invalid"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "refusal after expiry",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg",
+              "data": "g6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4"
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "ok": true
+            }
+          }
+        },
+        {
+          "clock": {
+            "from": "deadline",
+            "offsetMs": 0
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "cmA8eLfjhGkIJIp-O6WlvQ",
+              "data": "g6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn-kye4TOF2Cp8zxFjtgharP9Bk-Y4it0vccQWaLsNX6H0RpjrPY_SJHbJG22wAlSm-Uud4"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "www and any other origin get an empty 404 with no CORS",
+      "steps": [
+        {
+          "request": {
+            "origin": "https://www.sliccy.ai",
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 404,
+            "text": "",
+            "absent": ["access-control-allow-origin", "vary"]
+          }
+        },
+        {
+          "request": {
+            "origin": "https://other.sliccy.ai",
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 404,
+            "text": "",
+            "absent": ["access-control-allow-origin"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "an allowed origin is echoed with Vary and no credentials; preflight only for POST and content-type",
+      "steps": [
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "method": "OPTIONS",
+            "path": "/v1/take",
+            "headers": {
+              "access-control-request-method": "POST",
+              "access-control-request-headers": "content-type"
+            }
+          },
+          "response": {
+            "status": 204,
+            "text": "",
+            "headers": {
+              "access-control-allow-origin": "https://seven.sliccy.ai",
+              "vary": "Origin",
+              "access-control-allow-methods": "POST",
+              "access-control-allow-headers": "content-type"
+            },
+            "absent": ["access-control-allow-credentials"]
+          }
+        },
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "method": "OPTIONS",
+            "path": "/v1/take",
+            "headers": {
+              "access-control-request-method": "POST",
+              "access-control-request-headers": "content-type, authorization"
+            }
+          },
+          "response": {
+            "status": 404,
+            "text": ""
+          }
+        },
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "headers": {
+              "access-control-allow-origin": "https://seven.sliccy.ai",
+              "vary": "Origin",
+              "cache-control": "no-store",
+              "x-content-type-options": "nosniff",
+              "referrer-policy": "no-referrer"
+            },
+            "absent": ["access-control-allow-credentials", "set-cookie"],
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ids in a query or path answer an empty 404",
+      "steps": [
+        {
+          "request": {
+            "path": "/v1/open",
+            "body": {
+              "v": 1
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "expiresAt": "$DEADLINE"
+            }
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take?id=$id",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 404,
+            "text": ""
+          }
+        },
+        {
+          "request": {
+            "path": "/v1/take/$id",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "NVJFTulvWg7v-smFIlOCwg"
+            }
+          },
+          "response": {
+            "status": 404,
+            "text": ""
+          }
+        }
+      ]
+    }
+  ]
+}

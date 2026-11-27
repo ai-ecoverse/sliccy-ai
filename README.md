@@ -400,6 +400,117 @@ Support works once these manual steps are done:
 
 **On www:** `www.sliccy.ai` is one origin for SLICC 6 and seven's `/7/`. A token seven holds there is visible to SLICC 6's pages on www, through script or its service worker. That includes the IMS token the Support API sends, which is the same token seven's existing Adobe sign-in already holds on www. `/7/api/support/*` adds no new exposure, and same-origin is the only check it can make: a SLICC 6 page holding the token could call it too.
 
+## Excerpt mailbox relay
+
+A dormant, bounded, opaque-record service: a separate Worker script (`sliccy-relay`, a placeholder name) with one SQLite-backed Durable Object per mailbox (`Mailbox`) and one singleton counter (`Gate`). It stores short-lived, write-once slots of opaque bytes for two endpoints and deletes them at an absolute deadline.
+
+It is dark. [`relay/wrangler.jsonc`](relay/wrangler.jsonc) sets `MAILBOX_GATE` to `off`, has no route, `workers_dev` and `preview_urls` off and observability off. Nothing deploys, migrates or routes it: the main Worker's `wrangler.json`, `src/`, [`scripts/deploy.mjs`](scripts/deploy.mjs) and [`ci.yml`](.github/workflows/ci.yml) don't mention it, and its migration tag (`v1-relay-mailbox`) has never been applied. The changeset adds no dependency; its tests use only what the repository already pins (Miniflare, `node:test`).
+
+**Without an approved PAKE there is no functional client path.** The vectors carry opaque synthetic bytes only. No toy envelope, home-made cipher or stand-in for end-to-end security appears anywhere, tests included. The relay uses only platform primitives: `crypto.subtle.digest('SHA-256')`, `crypto.subtle.timingSafeEqual` and the platform's Durable Object ids. The tests are synthetic service tests of the relay's storage and transport rules; they prove nothing about end-to-end security.
+
+### Who enforces what
+
+The relay (this changeset):
+- the gate: unless `MAILBOX_GATE` is exactly `on`, every request, `OPTIONS` included, is the same empty 404;
+- https only, then an exact two-origin allowlist, before any body is read or any Durable Object touched;
+- the body cap, the envelope-size allowlist, the slot-count and total caps;
+- the absolute deadline;
+- write-once slots, the constant-time verifier compare, atomic read-and-delete of verified slots;
+- the wrong-token, empty-read, refusal and total-request budgets, the rate limits and the global cap;
+- uniform errors and no logging.
+
+Its replay defence is only write-once slots, one-shot consumption and expiry. The CORS and token checks are not end-to-end user authentication: that is the supervisor ceremony and the key agreement, which this changeset does not implement.
+
+The endpoints (the BIOS supervisor and the agent worker, not implemented here):
+- the PAKE and explicit key confirmation;
+- the transcript binding: mailbox id, both origins, audience generation, epoch and the exact selected bytes;
+- AEAD integrity, message nonces and replay rejection at application level;
+- padding every envelope to an allowed size;
+- recipient binding and the typed single-use commit;
+- the owner's ceremony: the relay cannot see "Prepare to send", the audience fetch or consent.
+
+A take of a verified slot is not proof that the other endpoint retrieved or accepted anything: the relay has no receipt semantics beyond its own atomic consume. A lost receipt slot means "unconfirmed". A `503 failed` answer is an unknown outcome, not proof that nothing was inserted or consumed. The relay never retries, resends or replays on anyone's behalf.
+
+### Session
+
+- **Start:** mailbox creation (`POST /v1/open`). The endpoints open the mailbox when the owner chooses "Prepare to send"; there is no setup phase and no pre-minted mailbox.
+- **Timeout:** one absolute deadline, creation plus `MAX_TTL_SECONDS` (one constant in [`relay/src/wire.js`](relay/src/wire.js), 120 s). It is checked on every request, not only by the alarm, and one alarm at the deadline deletes everything. An optional `deadline` at open (a retained job, lease or preview deadline) can only shorten it. No caller TTL, no slack, no renewal, no extension, no reopen: after expiry every slot is gone and a new mailbox is needed.
+- **Metering:** per-source open, put and take rate limits and a per-id poll rate limit, all before any Durable Object is touched; per mailbox, a total request budget, an empty-read budget, a refused-operation budget and the wrong-token budget. No poll, read, write or retry resets any budget or the deadline. Exhausting the total, refusal or wrong-token budget destroys the mailbox; exhausting the empty-read budget refuses further empty reads.
+- **Channel:** https only, exactly `https://lease-pilot.sliccy.ai` and `https://seven.sliccy.ai` (not `https://www.sliccy.ai`, so not www/7, and no wildcard or preview origin), JSON bodies, short polling only (no long-poll, no WebSocket).
+
+### Wire contract
+
+Every request is `POST` with `Content-Type: application/json` and a `Content-Length` of at most 8 KiB; ids, slot ids, tokens and proofs travel only in the body, never in a path, query, header or log. Bodies are closed schemas with `v: 1`; unknown keys and wrong types are refused. Values are unpadded, canonical base64url.
+
+| Route | Body | Success |
+| --- | --- | --- |
+| `/v1/open` | `{v, deadline?}` (`deadline`: epoch ms, later than now) | `{v, id, expiresAt}` |
+| `/v1/put` | `{v, id, slot, data, verifier?, final?, reserve?}` | `{v, ok: true}` |
+| `/v1/take` | `{v, id, slot, token?}` | `{v, data}` or `{v, empty: true, retryAfterMs}` |
+
+- `id` is the platform's random Durable Object id (`newUniqueId()`, 64 hex characters), the only allocating call; afterwards a mailbox is addressed only with `idFromString`, which rejects a guessed or malformed id before any object is instantiated. No id, slot id or verifier is derived from the short human code.
+- `slot` is an opaque client-derived id of 16 to 32 bytes; `data` decodes to exactly 128, 256, 1024 or 4096 bytes. These are the sizes of the whole stored envelope (nonce, version byte and AEAD tag included), not of the plaintext: a 4 KiB envelope carries less than 4 KiB, and the excerpt itself is at most 2048 UTF-8 bytes. 4096 bytes are 5462 base64url characters; the largest legitimate put body, with a 32-byte slot id, a verifier, `final` and three reservations, is 5824 bytes, inside the 8 KiB cap.
+- A slot written without `verifier` (the public PAKE setup values) is write-once and read non-destructively, by anyone holding the id and slot id, until expiry. A slot written with `verifier` (base64url SHA-256 of a 32-byte token) is one-shot: a take with the matching `token`, compared in constant time, reads and deletes it atomically; exactly one racer wins.
+- `final: true` (verified slots only) marks the slot whose take closes the mailbox; `reserve` (with `final`, 1 to 3 slot ids) names the response slots, such as the receipt, that stay writable once after that. After the final take, nothing else is writable; once every reserved slot is taken the mailbox is deleted.
+- A take of an unwritten slot answers `{empty: true, retryAfterMs}` and burns no slot and no wrong-token attempt. A wrong or missing token on a verified slot, or a token on an unverified one, burns one attempt; after 5 the mailbox is destroyed.
+
+| Status | Body | Meaning |
+| --- | --- | --- |
+| 404 | empty | gate off, not https, origin not allowed, unknown path, a query, a method other than `POST`, a refused preflight |
+| 400 | `{v, error: 'invalid'}` | content type, schema, size or encoding |
+| 411 | `{v, error: 'length'}` | no `Content-Length`, refused before reading |
+| 413 | `{v, error: 'too-large'}` | `Content-Length` over the cap or malformed, or a body longer than its header, refused before any parse |
+| 429 | `{v, error: 'busy'}` | a rate limit or the global cap |
+| 409 | `{v, error: 'refused'}` | one answer for an unknown, guessed, expired, closed or destroyed mailbox, a taken or written slot, a wrong token and an exhausted budget |
+| 503 | `{v, error: 'failed'}` | unknown outcome, see above |
+
+Every answer has `cache-control: no-store`, `x-content-type-options: nosniff` and `referrer-policy: no-referrer`, and nothing identifying. For an allowed origin, `Access-Control-Allow-Origin` echoes it with `Vary: Origin`, never with `Allow-Credentials`; a preflight is answered (204, `Access-Control-Max-Age: 60`) only for `POST` with exactly `content-type`. No cookie is read or set. `empty` is only ever answered for a live mailbox; every refusal is the same 409.
+
+### Client contract (PAKE): obligations of the endpoint owners
+
+Not implemented here, and no PAKE library is accepted. After an approved PAKE with explicit key confirmation, both endpoints derive from the session key, with HKDF-SHA-256 and the labels listed in [`vectors.json`](relay/vectors.json) (`clientDerivations`, documentation only): the post-PAKE slot ids, one 32-byte auth token per verified slot (its SHA-256 is the slot's verifier) and the AEAD keys per direction. The transcript binds the mailbox id, both origins, the audience generation, the epoch and the exact selected bytes. Pre-PAKE setup slot ids derive from the mailbox id, never from the short code. Envelopes are padded to an allowed size.
+
+### What is stored
+
+Only end-to-end envelopes and public PAKE values (the clients' opaque `data`), SHA-256 hashes (every slot id is stored as its SHA-256, every verifier is a hash), counters and timestamps. No token, proof, plaintext, key, code, join URL or snapshot reaches the relay's storage; the Gate stores two timestamps per open. Durable Object point-in-time recovery history is acceptable only because everything stored is end-to-end ciphertext, a public PAKE value or a hash.
+
+Worst-case allocation: `open` is the only allocating call; the global live cap times the per-mailbox total (1000 × 16 KiB, about 16 MiB of envelopes plus small metadata), reached at most at the per-source open rate and the hourly cap. The `Gate` object is created by the first open after a deploy.
+
+### Placeholders for review
+
+All of these are placeholders for the guard owner's review, in [`relay/src/wire.js`](relay/src/wire.js) (`LIMITS`) and [`relay/wrangler.jsonc`](relay/wrangler.jsonc):
+
+```
+MAX_TTL_SECONDS                    see relay/src/wire.js (the one session constant)
+body cap                           8192 bytes
+envelope sizes                     128, 256, 1024, 4096 bytes
+slots per mailbox                  12 (reservations included)
+total per mailbox                  16384 bytes
+reservations per final slot        3
+wrong-token attempts               5, then destroyed
+empty reads per mailbox            300, then refused
+refused operations per mailbox     10, then destroyed
+requests per mailbox               400, then destroyed
+retryAfterMs                       1000
+live mailboxes (global)            1000
+opens per hour (global)            3000
+preflight max-age                  60 s
+OPENS per source                   10 per 60 s    namespace_id 4301
+WRITES per source                  60 per 60 s    namespace_id 4302
+TAKES per source                   150 per 60 s   namespace_id 4303
+POLLS per mailbox id               150 per 60 s   namespace_id 4304
+```
+
+The ratelimit `namespace_id`s (4301 to 4304) are unused by the main Worker (4201, 4202) and must be confirmed unused on the account at provisioning. `RELAY_LIMITS`, unset in the config, can only tighten these numbers (the tests use it); it cannot touch `MAX_TTL_SECONDS`.
+
+### Tests
+
+`test/integration/relay-*.test.mjs`, run with the rest by `npm test`, offline under Miniflare from `relay/wrangler.jsonc`, with synthetic bytes only. Each row runs against the relay as written, then against mutants built by rewriting its source text ([`relay.mjs`](test/integration/relay.mjs)), each of which must fail the row. Deadline rows use a fake clock added the same way (a test-only header that sets `Date.now`); the lost-ack rows inject a synthetic crash. `relay-vectors.test.mjs` replays [`vectors.json`](relay/vectors.json), which the BIOS supervisor and agent-worker owners can run against their clients later.
+
+### Not authorized by this changeset
+
+The receiver's trust, retention, recipient binding, audience, safe redaction, Send availability, the vault API or its mapping, any PAKE choice, Seven's `connect-src` for the mailbox origin, any hostname (the mailbox host is a placeholder), any route, any deploy, provisioning, migration or gate flip, and opening a pull request.
+
 ## Develop
 
 ```sh
