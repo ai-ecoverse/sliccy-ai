@@ -90,8 +90,12 @@ test('synthetic service test: the vectors use the relay constants and whole-enve
 });
 
 const MUTANTS = {
-  'session: setup, audience, excerpt, receipt; only the reserved receipt slot is writable after the excerpt take':
+  'session: setup, audience, excerpt, receipt; only the reserved receipt slot is writable after the excerpt take, and only with a verifier':
     [
+      {
+        name: 'an unverified reserved write accepted',
+        edits: [['mailbox.js', 'if (held?.reserved && !verifier) return this.refuse(meta);', '']],
+      },
       {
         name: 'no closure',
         edits: [

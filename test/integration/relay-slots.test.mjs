@@ -9,6 +9,9 @@ const verified = (secret, extra = {}) => ({ verifier: verifier(secret), ...extra
 const VERIFY =
   'if (proof === null || !this.matches(stored.verifier, proof)) return this.wrong(meta);';
 const TAKEN = 'this.kv.put(key, { written: true, taken: true, reserved: stored.reserved });';
+const CRASH_TAKE = ['mailbox.js', TAKEN, `${TAKEN}\n      throw new Error('synthetic crash');`];
+const TAKE_TX = 'this.ctx.storage.transactionSync(() => {\n      this.kv.put(key,';
+const NO_TAKE_TX = ['mailbox.js', TAKE_TX, '((run) => run())(() => {\n      this.kv.put(key,'];
 
 row(
   'slots are write-once, and of racing writes to one slot exactly one wins',
@@ -87,7 +90,7 @@ row(
     const extra = verified(token(1), { final: true, reserve: [slot(20), slot(21)] });
     assert.equal((await relay.put(other, slot(9), bytes(128), extra)).status, 200);
     assert.deepEqual((await relay.put(other, slot(22), bytes(128))).body, REFUSED);
-    assert.equal((await relay.put(other, slot(20), bytes(128))).status, 200);
+    assert.equal((await relay.put(other, slot(20), bytes(128), verified(token(2)))).status, 200);
   },
   {
     mutants: [
@@ -543,7 +546,7 @@ row(
 );
 
 row(
-  'a failure after a consume surfaces as an explicit failure, never a silent replay or resend',
+  'a take that fails inside its transaction answers 503 and consumes nothing; the relay never replays',
   async (relay) => {
     const id = await relay.open();
     const secret = token(1);
@@ -552,19 +555,23 @@ row(
     assert.equal(failed.status, 503);
     assert.deepEqual(failed.body, { v: 1, error: 'failed' });
     assert.equal(failed.header('cache-control'), 'no-store');
-    const again = await relay.take(id, slot(1), secret);
-    assert.notEqual(again.body?.data, bytes(1024));
+    assert.equal(
+      relay.live('Mailbox')[0].kv[
+        Object.keys(relay.live('Mailbox')[0].kv).find((key) => key.startsWith('slot:'))
+      ].data,
+      bytes(1024)
+    );
+    assert.equal((await relay.take(id, slot(1), secret)).status, 503);
   },
   {
-    options: {
-      edits: [['mailbox.js', TAKEN, `${TAKEN}\n    throw new Error('synthetic crash');`]],
-    },
+    options: { edits: [CRASH_TAKE] },
     mutants: [
+      { name: 'take not transactional', edits: [CRASH_TAKE, NO_TAKE_TX] },
       {
         name: 'a DO failure is not caught',
         options: {},
         edits: [
-          ['mailbox.js', TAKEN, `${TAKEN}\n    throw new Error('synthetic crash');`],
+          CRASH_TAKE,
           ['worker.js', "  } catch {\n    return { state: 'failed' };\n  }", '  } finally {\n  }'],
         ],
       },
@@ -614,6 +621,108 @@ row(
         edits: [
           ['mailbox.js', 'if (refusals >= this.limits.refusals) await this.wipe();\n    else ', ''],
         ],
+      },
+    ],
+  }
+);
+
+row(
+  'a well-formed but never-opened id stores nothing, keeps no DO state and is refused uniformly',
+  async (relay) => {
+    const forged = [await relay.mint(), await relay.mint()];
+    const reference = plain(await relay.take(UNKNOWN, slot(1)));
+    for (const id of forged) {
+      assert.deepEqual(plain(await relay.take(id, slot(1))), reference);
+      assert.deepEqual(plain(await relay.take(id, slot(1), token(1))), reference);
+      assert.deepEqual(plain(await relay.put(id, slot(1), bytes(128))), reference);
+      assert.deepEqual(
+        plain(await relay.put(id, slot(2), bytes(256), verified(token(1)))),
+        reference
+      );
+      assert.deepEqual(plain(await relay.take(id, slot(1))), reference);
+    }
+    assert.deepEqual(relay.live('Mailbox'), []);
+    for (const { rows } of relay.stored('Mailbox')) assert.deepEqual(rows, {});
+    assert.equal(relay.instances('Gate'), 0);
+  },
+  {
+    mutants: [
+      {
+        name: 'an unknown id is counted',
+        edits: [
+          [
+            'mailbox.js',
+            'if (!meta) return refused();',
+            "if (!meta) {\n      this.kv.put('seen', 1);\n      return refused();\n    }",
+          ],
+        ],
+      },
+      {
+        name: 'an unknown id is opened on first use',
+        edits: [
+          [
+            'mailbox.js',
+            'if (!meta) return refused();',
+            "if (!meta) await this.open({ expiresAt: Date.now() + 120000 });\n    if (!this.kv.get('meta')) return refused();",
+          ],
+          [
+            'mailbox.js',
+            'const counted = { ...meta, requests: meta.requests + 1 };',
+            "const current = this.kv.get('meta');\n    const counted = { ...current, requests: current.requests + 1 };",
+          ],
+        ],
+      },
+    ],
+  }
+);
+
+row(
+  'a final-slot take that fails inside its transaction keeps the only copy and leaves the mailbox open',
+  async (relay) => {
+    const id = await relay.open();
+    await relay.put(
+      id,
+      slot(1),
+      bytes(4096),
+      verified(token(1), { final: true, reserve: [slot(2)] })
+    );
+    assert.equal((await relay.take(id, slot(1), token(1))).status, 503);
+    const [{ kv }] = relay.live('Mailbox');
+    assert.equal(kv.meta.closed, false);
+    const stored = Object.entries(kv)
+      .filter(([key]) => key.startsWith('slot:'))
+      .map(([, v]) => v);
+    assert.equal(stored.filter((value) => value.data === bytes(4096) && !value.taken).length, 1);
+    assert.equal((await relay.put(id, slot(3), bytes(128))).status, 200);
+  },
+  {
+    options: { edits: [CRASH_TAKE] },
+    mutants: [{ name: 'take not transactional', edits: [CRASH_TAKE, NO_TAKE_TX] }],
+  }
+);
+
+row(
+  'a reserved slot is writable only with a verifier, so the receipt is one-shot and settles the mailbox',
+  async (relay) => {
+    const id = await relay.open();
+    await relay.put(
+      id,
+      slot(1),
+      bytes(4096),
+      verified(token(1), { final: true, reserve: [slot(2)] })
+    );
+    assert.deepEqual((await relay.put(id, slot(2), bytes(256))).body, REFUSED);
+    assert.equal((await relay.take(id, slot(1), token(1))).body.data, bytes(4096));
+    assert.deepEqual((await relay.put(id, slot(2), bytes(256))).body, REFUSED);
+    assert.equal((await relay.put(id, slot(2), bytes(256), verified(token(2)))).status, 200);
+    assert.equal((await relay.take(id, slot(2), token(2))).body.data, bytes(256));
+    assert.deepEqual(relay.live('Mailbox'), []);
+  },
+  {
+    mutants: [
+      {
+        name: 'an unverified reserved write accepted',
+        edits: [['mailbox.js', 'if (held?.reserved && !verifier) return this.refuse(meta);', '']],
       },
     ],
   }

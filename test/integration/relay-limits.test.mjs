@@ -370,9 +370,7 @@ row(
     mutants: [
       {
         name: 'empty-read budget removed',
-        edits: [
-          ['mailbox.js', 'if (meta.empties >= this.limits.empties) return this.refuse(meta);', ''],
-        ],
+        edits: [['mailbox.js', 'if (meta.empties >= this.limits.empties) return refused();', '']],
       },
     ],
   }
@@ -441,6 +439,133 @@ row(
         edits: [
           ['worker.js', 'if (size > length || size > cap) {', 'if (false) {'],
           ['worker.js', 'if (size !== length) return { status: 400 };', ''],
+        ],
+      },
+    ],
+  }
+);
+
+const burn = async (relay, wrong) => {
+  const id = await relay.open();
+  await relay.put(id, slot(1), bytes(128));
+  await relay.put(id, slot(2), bytes(256), { verifier: verifier(token(1)) });
+  for (let at = 0; at < wrong; at++) await relay.take(id, slot(2), token(10 + at));
+  return id;
+};
+
+row(
+  'a RELAY_LIMITS value larger than a default leaves the default',
+  async (relay) => {
+    const id = await burn(relay, 5);
+    assert.deepEqual((await relay.take(id, slot(1))).body, { v: 1, error: 'refused' });
+    assert.deepEqual(relay.live('Mailbox'), []);
+    const raw = await relay.raw('/v1/open', head('Content-Length: 9000\r\n'));
+    assert.equal(status(raw), 413);
+  },
+  {
+    options: { vars: { RELAY_LIMITS: '{"attempts":50,"body":100000}' } },
+    mutants: [
+      {
+        name: 'a larger value is taken',
+        edits: [
+          [
+            'wire.js',
+            'merged[key] = Math.min(LIMITS[key], extra[key]);',
+            'merged[key] = extra[key];',
+          ],
+        ],
+      },
+    ],
+  }
+);
+
+row(
+  'malformed RELAY_LIMITS values (a string, zero, negative, fractional) leave the defaults',
+  async (relay) => {
+    const id = await burn(relay, 4);
+    assert.deepEqual((await relay.take(id, slot(1))).body, { v: 1, data: bytes(128) });
+    assert.deepEqual((await relay.take(id, slot(3))).body, {
+      v: 1,
+      empty: true,
+      retryAfterMs: 1000,
+    });
+    assert.equal(relay.live('Mailbox')[0].kv.meta.attempts, 4);
+  },
+  {
+    options: {
+      vars: { RELAY_LIMITS: '{"attempts":"1","empties":0,"refusals":-3,"requests":1.5}' },
+    },
+    mutants: [
+      {
+        name: 'values not type-checked',
+        edits: [
+          [
+            'wire.js',
+            'if (Number.isSafeInteger(extra[key]) && extra[key] > 0)',
+            'if (extra[key] !== undefined)',
+          ],
+        ],
+      },
+    ],
+  }
+);
+
+for (const value of ['not json', '[1]', 'null', '"1"'])
+  row(
+    `an unparsable or non-object RELAY_LIMITS (${value}) leaves the defaults`,
+    async (relay) => {
+      const id = await burn(relay, 4);
+      assert.deepEqual((await relay.take(id, slot(1))).body, { v: 1, data: bytes(128) });
+      assert.equal(relay.live('Mailbox')[0].kv.meta.attempts, 4);
+    },
+    {
+      options: { vars: { RELAY_LIMITS: value } },
+      mutants:
+        value === 'not json'
+          ? [
+              {
+                name: 'parse errors not caught',
+                edits: [
+                  [
+                    'wire.js',
+                    "try {\n    extra = JSON.parse(env.RELAY_LIMITS ?? '{}') ?? {};\n  } catch {}",
+                    "extra = JSON.parse(env.RELAY_LIMITS ?? '{}') ?? {};",
+                  ],
+                ],
+              },
+            ]
+          : [],
+    }
+  );
+
+row(
+  'an over-budget empty read is a plain refusal: it never counts as a refusal and never wipes the mailbox',
+  async (relay) => {
+    const id = await relay.open();
+    await relay.put(id, slot(1), bytes(4096), { verifier: verifier(token(1)) });
+    for (let at = 0; at < 2; at++)
+      assert.deepEqual((await relay.take(id, slot(9))).body, {
+        v: 1,
+        empty: true,
+        retryAfterMs: 1000,
+      });
+    for (let at = 0; at < 4; at++)
+      assert.deepEqual((await relay.take(id, slot(9))).body, { v: 1, error: 'refused' });
+    assert.equal(relay.live('Mailbox').length, 1);
+    assert.equal(relay.live('Mailbox')[0].kv.meta.refusals, 0);
+    assert.deepEqual((await relay.take(id, slot(1), token(1))).body, { v: 1, data: bytes(4096) });
+  },
+  {
+    options: { limits: { empties: 2, refusals: 2 } },
+    mutants: [
+      {
+        name: 'over-budget empty reads spend the refusal budget',
+        edits: [
+          [
+            'mailbox.js',
+            'if (meta.empties >= this.limits.empties) return refused();',
+            'if (meta.empties >= this.limits.empties) return this.refuse(meta);',
+          ],
         ],
       },
     ],

@@ -7,7 +7,11 @@
     "metering": "per-source open, put and take rate limits; a per-id poll rate limit; per-mailbox budgets for total requests, empty reads, refused operations and wrong tokens; no poll, read, write or retry resets or extends any budget or the deadline",
     "channel": "https only, an exact allowlist of two origins, short polling, JSON bodies only",
     "authentication": "the CORS and token checks are not end-to-end user authentication; that is the supervisor ceremony and the key agreement, which this changeset does not implement",
-    "failure": "a 503 failed answer is an unknown outcome: it is not proof that nothing was inserted or consumed; the relay never retries, resends or replays"
+    "failure": "a 503 failed answer: for a failure inside the mailbox transaction the operation did not commit; for any other platform failure the outcome is unknown and is not proof that nothing was inserted or consumed; the relay never retries, resends or replays",
+    "endpointRows": "The early-open mutant and the Prepare to send timing are endpoint rows: the relay cannot observe when the owner starts the ceremony, so the BIOS supervisor and agent-worker owners must test them in their clients. The relay-side stand-ins stay: a clock that starts at the first slot and an open that accepts a payload are mutants that the relay rows must catch.",
+    "addressing": "How the second party learns the mailbox address is the endpoint ceremony, not the relay. Any short nameplate or lookup the endpoints add must give no oracle beyond the relay's per-id budgets and must not let a guesser squat or consume a live mailbox's setup slots.",
+    "reserved": "a reserved response slot is writable once and only with a verifier, so it is a one-shot verified take; once every reserved slot has been taken after the final take, the mailbox is deleted",
+    "emptyBudget": "an empty read over the per-id empty-read budget is the uniform refusal; it never counts as a refusal and never destroys the mailbox; the rate limits and the deadline bound polling"
   },
   "notation": {
     "placeholders": "a string \"$name\" in a request is replaced by the value bound to name; in a response it binds name on first use and must equal it afterwards",
@@ -760,7 +764,7 @@
       ]
     },
     {
-      "name": "session: setup, audience, excerpt, receipt; only the reserved receipt slot is writable after the excerpt take",
+      "name": "session: setup, audience, excerpt, receipt; only the reserved receipt slot is writable after the excerpt take, and only with a verifier",
       "steps": [
         {
           "request": {
@@ -1016,6 +1020,25 @@
               "id": "$id",
               "slot": "-53u_A9GEj4escIZgXv6Tg",
               "token": "dB-_6_7YkUH_-OJkLsUmS68UZK2o5ZNPTamrivxGfNc"
+            }
+          },
+          "response": {
+            "status": 409,
+            "body": {
+              "v": 1,
+              "error": "refused"
+            }
+          }
+        },
+        {
+          "request": {
+            "origin": "https://seven.sliccy.ai",
+            "path": "/v1/put",
+            "body": {
+              "v": 1,
+              "id": "$id",
+              "slot": "_TTZnF4j9dpGwke95JEy3Q",
+              "data": "a5C12v8kSW6TuN0CJ0xxlrvgBSpPdJm-4wgtUnecweYLMFV6n8TpDjNYfaLH7BE2W4Clyu8UOV6DqM3yFzxhhqvQ9Ro_ZImu0_gdQmeMsdb7IEVqj7TZ_iNIbZK33AEmS3CVut8EKU5zmL3iByxRdpvA5QovVHmew-gNMld8ocbrEDVaf6TJ7hM4XYKnzPEWO2CFqs_0GT5jiK3S9xxBZouw1fofRGmOs9j9IkdskbbbACVKb5S53gMoTXKXvOEGK1B1mr_kCS5TeJ3C5wwxVnugxeoPNFl-o8jtEjdcgabL8BU6X4SpzvMYPWKHrNH2G0Bliq_U-R5DaI2y1_whRg"
             }
           },
           "response": {

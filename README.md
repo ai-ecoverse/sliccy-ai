@@ -427,15 +427,16 @@ The endpoints (the BIOS supervisor and the agent worker, not implemented here):
 - AEAD integrity, message nonces and replay rejection at application level;
 - padding every envelope to an allowed size;
 - recipient binding and the typed single-use commit;
-- the owner's ceremony: the relay cannot see "Prepare to send", the audience fetch or consent.
+- the owner's ceremony: the relay cannot see "Prepare to send", the audience fetch or consent;
+- how the second party learns the mailbox address: any short nameplate or lookup the endpoints add must give no oracle beyond the relay's per-id budgets and must not let a guesser squat or consume a live mailbox's setup slots.
 
-A take of a verified slot is not proof that the other endpoint retrieved or accepted anything: the relay has no receipt semantics beyond its own atomic consume. A lost receipt slot means "unconfirmed". A `503 failed` answer is an unknown outcome, not proof that nothing was inserted or consumed. The relay never retries, resends or replays on anyone's behalf.
+A take of a verified slot is not proof that the other endpoint retrieved or accepted anything: the relay has no receipt semantics beyond its own atomic consume. A lost receipt slot means "unconfirmed". Each put and each verified take commits its slot and counter writes in one `transactionSync`, and a take returns the bytes only after that commit. So when a failure is raised inside that transaction (the case the tests inject), a `503 failed` answer means the operation did not commit. For any other platform failure, such as a connection lost after the commit, a `503` is an unknown outcome, not proof that nothing was inserted or consumed. The relay never retries, resends or replays on anyone's behalf.
 
 ### Session
 
 - **Start:** mailbox creation (`POST /v1/open`). The endpoints open the mailbox when the owner chooses "Prepare to send"; there is no setup phase and no pre-minted mailbox.
 - **Timeout:** one absolute deadline, creation plus `MAX_TTL_SECONDS` (one constant in [`relay/src/wire.js`](relay/src/wire.js), 120 s). It is checked on every request, not only by the alarm, and one alarm at the deadline deletes everything. An optional `deadline` at open (a retained job, lease or preview deadline) can only shorten it. No caller TTL, no slack, no renewal, no extension, no reopen: after expiry every slot is gone and a new mailbox is needed.
-- **Metering:** per-source open, put and take rate limits and a per-id poll rate limit, all before any Durable Object is touched; per mailbox, a total request budget, an empty-read budget, a refused-operation budget and the wrong-token budget. No poll, read, write or retry resets any budget or the deadline. Exhausting the total, refusal or wrong-token budget destroys the mailbox; exhausting the empty-read budget refuses further empty reads.
+- **Metering:** per-source open, put and take rate limits and a per-id poll rate limit, all before any Durable Object is touched; per mailbox, a total request budget, an empty-read budget, a refused-operation budget and the wrong-token budget. No poll, read, write or retry resets any budget or the deadline. Exhausting the total, refusal or wrong-token budget destroys the mailbox. An empty read over the empty-read budget gets the uniform refusal; it never counts as a refusal and never destroys the mailbox, and the rate limits and the deadline bound further polling.
 - **Channel:** https only, exactly `https://lease-pilot.sliccy.ai` and `https://seven.sliccy.ai` (not `https://www.sliccy.ai`, so not www/7, and no wildcard or preview origin), JSON bodies, short polling only (no long-poll, no WebSocket).
 
 ### Wire contract
@@ -448,10 +449,10 @@ Every request is `POST` with `Content-Type: application/json` and a `Content-Len
 | `/v1/put` | `{v, id, slot, data, verifier?, final?, reserve?}` | `{v, ok: true}` |
 | `/v1/take` | `{v, id, slot, token?}` | `{v, data}` or `{v, empty: true, retryAfterMs}` |
 
-- `id` is the platform's random Durable Object id (`newUniqueId()`, 64 hex characters), the only allocating call; afterwards a mailbox is addressed only with `idFromString`, which rejects a guessed or malformed id before any object is instantiated. No id, slot id or verifier is derived from the short human code.
+- `id` is the platform's random Durable Object id (`newUniqueId()`, 64 hex characters), the only allocating call; afterwards a mailbox is addressed only with `idFromString`, which rejects a malformed id or one of another namespace before any object is instantiated. A well-formed id of this namespace that was never opened does instantiate a `Mailbox` object, but it reads one missing key, writes nothing, sets no alarm and answers the uniform 409; its cost is one Durable Object request each, bounded by the per-source put and take limits and the per-id poll limit (under Miniflare it leaves an empty SQLite file with no tables). No id, slot id or verifier is derived from the short human code.
 - `slot` is an opaque client-derived id of 16 to 32 bytes; `data` decodes to exactly 128, 256, 1024 or 4096 bytes. These are the sizes of the whole stored envelope (nonce, version byte and AEAD tag included), not of the plaintext: a 4 KiB envelope carries less than 4 KiB, and the excerpt itself is at most 2048 UTF-8 bytes. 4096 bytes are 5462 base64url characters; the largest legitimate put body, with a 32-byte slot id, a verifier, `final` and three reservations, is 5824 bytes, inside the 8 KiB cap.
 - A slot written without `verifier` (the public PAKE setup values) is write-once and read non-destructively, by anyone holding the id and slot id, until expiry. A slot written with `verifier` (base64url SHA-256 of a 32-byte token) is one-shot: a take with the matching `token`, compared in constant time, reads and deletes it atomically; exactly one racer wins.
-- `final: true` (verified slots only) marks the slot whose take closes the mailbox; `reserve` (with `final`, 1 to 3 slot ids) names the response slots, such as the receipt, that stay writable once after that. After the final take, nothing else is writable; once every reserved slot is taken the mailbox is deleted.
+- `final: true` (verified slots only) marks the slot whose take closes the mailbox; `reserve` (with `final`, 1 to 3 slot ids) names the response slots, such as the receipt, that stay writable once after that, and only with a `verifier`, so each is a one-shot verified take. After the final take, nothing else is writable; once every reserved slot is taken the mailbox is deleted. Pre-writing a name before it is reserved needs the mailbox id and a slot name derived from the session key, so it is a denial by a holder of the id only.
 - A take of an unwritten slot answers `{empty: true, retryAfterMs}` and burns no slot and no wrong-token attempt. A wrong or missing token on a verified slot, or a token on an unverified one, burns one attempt; after 5 the mailbox is destroyed.
 
 | Status | Body | Meaning |
@@ -462,9 +463,9 @@ Every request is `POST` with `Content-Type: application/json` and a `Content-Len
 | 413 | `{v, error: 'too-large'}` | `Content-Length` over the cap or malformed, or a body longer than its header, refused before any parse |
 | 429 | `{v, error: 'busy'}` | a rate limit or the global cap |
 | 409 | `{v, error: 'refused'}` | one answer for an unknown, guessed, expired, closed or destroyed mailbox, a taken or written slot, a wrong token and an exhausted budget |
-| 503 | `{v, error: 'failed'}` | unknown outcome, see above |
+| 503 | `{v, error: 'failed'}` | a failure, see above |
 
-Every answer has `cache-control: no-store`, `x-content-type-options: nosniff` and `referrer-policy: no-referrer`, and nothing identifying. For an allowed origin, `Access-Control-Allow-Origin` echoes it with `Vary: Origin`, never with `Allow-Credentials`; a preflight is answered (204, `Access-Control-Max-Age: 60`) only for `POST` with exactly `content-type`. No cookie is read or set. `empty` is only ever answered for a live mailbox; every refusal is the same 409.
+Every answer has `cache-control: no-store`, `x-content-type-options: nosniff` and `referrer-policy: no-referrer`, and nothing identifying. For an allowed origin, `Access-Control-Allow-Origin` echoes it with `Vary: Origin`, never with `Allow-Credentials`; a preflight is answered (204, `Access-Control-Max-Age: 60`) only for `POST` with exactly `content-type`. No cookie is read or set. `empty` is only ever answered for a live mailbox; every refusal is the same 409. So `empty` (200) versus 409 reveals that a mailbox exists only to someone who already holds its 256-bit id; anyone who doesn't hold it gets no oracle.
 
 ### Client contract (PAKE): obligations of the endpoint owners
 
@@ -474,7 +475,7 @@ Not implemented here, and no PAKE library is accepted. After an approved PAKE wi
 
 Only end-to-end envelopes and public PAKE values (the clients' opaque `data`), SHA-256 hashes (every slot id is stored as its SHA-256, every verifier is a hash), counters and timestamps. No token, proof, plaintext, key, code, join URL or snapshot reaches the relay's storage; the Gate stores two timestamps per open. Durable Object point-in-time recovery history is acceptable only because everything stored is end-to-end ciphertext, a public PAKE value or a hash.
 
-Worst-case allocation: `open` is the only allocating call; the global live cap times the per-mailbox total (1000 × 16 KiB, about 16 MiB of envelopes plus small metadata), reached at most at the per-source open rate and the hourly cap. The `Gate` object is created by the first open after a deploy.
+Worst-case allocation: `open` is the only allocating call; the global live cap times the per-mailbox total: 100 × 16 KiB, about 1.6 MiB of decoded envelopes, stored as base64url text of about 4/3 of that (about 21.3 KiB per mailbox, about 2.1 MiB in all), plus at most 12 slot-id hashes and one meta object per mailbox; at most 600 mailboxes an hour, each reached only at the per-source open rate. The `Gate` object is created by the first open after a deploy. An exhausted gate (live or hourly cap) is an availability loss only: further opens answer 429 and no existing mailbox is affected. The Gate's live count is not released when a mailbox closes early: each opened mailbox counts until its own deadline, an over-count of at most `MAX_TTL_SECONDS` per mailbox.
 
 ### Placeholders for review
 
@@ -492,8 +493,8 @@ empty reads per mailbox            300, then refused
 refused operations per mailbox     10, then destroyed
 requests per mailbox               400, then destroyed
 retryAfterMs                       1000
-live mailboxes (global)            1000
-opens per hour (global)            3000
+live mailboxes (global)            100
+opens per hour (global)            600
 preflight max-age                  60 s
 OPENS per source                   10 per 60 s    namespace_id 4301
 WRITES per source                  60 per 60 s    namespace_id 4302
@@ -501,11 +502,13 @@ TAKES per source                   150 per 60 s   namespace_id 4303
 POLLS per mailbox id               150 per 60 s   namespace_id 4304
 ```
 
-The ratelimit `namespace_id`s (4301 to 4304) are unused by the main Worker (4201, 4202) and must be confirmed unused on the account at provisioning. `RELAY_LIMITS`, unset in the config, can only tighten these numbers (the tests use it); it cannot touch `MAX_TTL_SECONDS`.
+The ratelimit `namespace_id`s (4301 to 4304) are unused by the main Worker (4201, 4202) and must be confirmed unused on the account at provisioning. `RELAY_LIMITS`, unset in the config, can only tighten these numbers (the tests use it): a larger value, a non-integer, zero, a negative value or an unparsable string leaves the default; it cannot touch `MAX_TTL_SECONDS`.
 
 ### Tests
 
-`test/integration/relay-*.test.mjs`, run with the rest by `npm test`, offline under Miniflare from `relay/wrangler.jsonc`, with synthetic bytes only. Each row runs against the relay as written, then against mutants built by rewriting its source text ([`relay.mjs`](test/integration/relay.mjs)), each of which must fail the row. Deadline rows use a fake clock added the same way (a test-only header that sets `Date.now`); the lost-ack rows inject a synthetic crash. `relay-vectors.test.mjs` replays [`vectors.json`](relay/vectors.json), which the BIOS supervisor and agent-worker owners can run against their clients later.
+`test/integration/relay-*.test.mjs`, run with the rest by `npm test`, offline under Miniflare from `relay/wrangler.jsonc`, with synthetic bytes only. Each row runs against the relay as written, then against mutants built by rewriting its source text ([`relay.mjs`](test/integration/relay.mjs)), each of which must fail the row. Deadline rows use a fake clock added the same way (a test-only header that sets `Date.now`); the lost-ack rows inject a synthetic crash. `relay-vectors.test.mjs` replays [`vectors.json`](relay/vectors.json), which the BIOS supervisor and agent-worker owners can run against their clients later. The early-open mutant and the Prepare to send timing are endpoint rows, for those owners; the relay's stand-ins (a clock that starts at the first slot, an open that accepts a payload) stay.
+
+Not executed, and nothing is claimed about them: the live rate-limit windows (and whether namespaces 4301 to 4304 are free), whether workerd rolls back a turn that throws outside `transactionSync`, alarm lag past the deadline, point-in-time recovery after `deleteAll`, Durable Object size limits, the entropy of `newUniqueId` on the platform, and whether `cf-connecting-ip` can be spoofed once a route exists.
 
 ### Not authorized by this changeset
 

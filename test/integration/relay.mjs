@@ -32,6 +32,7 @@ export const verifier = (value) =>
 
 const DRIVER = `export default {
   async fetch(request, env) {
+    if (new URL(request.url).pathname === '/mint') return new Response(env.MAILBOX.newUniqueId().toString());
     const { path, origin, declared, body } = await request.json();
     const bytes = new TextEncoder().encode(body);
     const stream = new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } });
@@ -124,6 +125,7 @@ export async function start({ edits = [], vars = {}, limits, strict, prelude = '
         script: DRIVER,
         compatibilityDate: config.compatibility_date,
         serviceBindings: { RELAY: config.name },
+        durableObjects: { MAILBOX: { className: 'Mailbox', scriptName: config.name } },
       },
     ],
     durableObjectsPersist: dir,
@@ -200,6 +202,10 @@ export async function start({ edits = [], vars = {}, limits, strict, prelude = '
     },
     async now(ms) {
       await mf.dispatchFetch(`${HOST}/`, { headers: { 'x-test-now': String(ms) } });
+    },
+    async mint() {
+      const driver = await mf.getWorker('driver');
+      return (await driver.fetch('https://driver.test/mint')).text();
     },
     async lying(path, declared, body, origin = PILOT) {
       const driver = await mf.getWorker('driver');

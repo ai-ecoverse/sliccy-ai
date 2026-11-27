@@ -9,7 +9,13 @@ const CLOCK = { clock: true };
 const RENEW = 'expiresAt: Date.now() + 120000';
 const EXPIRY = 'if (meta.expiresAt <= Date.now()) {';
 const WIPE_ON_EXPIRY = `${EXPIRY}\n      await this.wipe();\n      return refused();\n    }`;
-const PUT_META = "this.kv.put('meta', {\n      ...meta,\n      slots: meta.slots + fresh,";
+const PUT_META = "this.kv.put('meta', {\n        ...meta,\n        slots: meta.slots + fresh,";
+const PUT_TX = 'this.ctx.storage.transactionSync(() => {\n      for (const name of reserve)';
+const NO_PUT_TX = [
+  'mailbox.js',
+  PUT_TX,
+  '((run) => run())(() => {\n      for (const name of reserve)',
+];
 const verified = (secret, extra = {}) => ({ verifier: verifier(secret), ...extra });
 
 async function session(relay, extra = {}) {
@@ -379,18 +385,19 @@ const CRASH_PUT = ['mailbox.js', PUT_META, `throw new Error('synthetic crash');\
 const CATCH = "  } catch {\n    return { state: 'failed' };\n  }";
 
 row(
-  'lost ack: an unknown outcome is not proof of no insertion, and the relay never retries',
+  'lost ack: a put that fails inside its transaction answers 503, commits nothing, and the relay never retries',
   async (relay) => {
     const id = await relay.open();
     const lost = await relay.put(id, slot(1), bytes(128));
     assert.equal(lost.status, 503);
     assert.deepEqual(lost.body, { v: 1, error: 'failed' });
-    assert.deepEqual((await relay.put(id, slot(1), bytes(128))).body, REFUSED);
-    assert.equal((await relay.take(id, slot(1))).body.data, bytes(128));
+    assert.deepEqual(Object.keys(relay.live('Mailbox')[0].kv), ['meta']);
+    assert.deepEqual((await relay.take(id, slot(1))).body, EMPTY);
   },
   {
     options: { edits: [CRASH_PUT] },
     mutants: [
+      { name: 'put not transactional', edits: [CRASH_PUT, NO_PUT_TX] },
       {
         name: 'the relay retries on failure',
         edits: [
@@ -405,6 +412,93 @@ row(
       {
         name: 'an unknown outcome reported as success',
         edits: [CRASH_PUT, ['worker.js', CATCH, "  } catch {\n    return { state: 'ok' };\n  }"]],
+      },
+    ],
+  }
+);
+
+row(
+  'the Gate does not release a live count on early close: an over-count of at most MAX_TTL_SECONDS per mailbox',
+  async (relay) => {
+    const { t0, id } = await session(relay);
+    await relay.put(id, slot(1), bytes(4096), verified(token(1), { final: true }));
+    assert.equal((await relay.take(id, slot(1), token(1))).body.data, bytes(4096));
+    assert.deepEqual(relay.live('Mailbox'), []);
+    assert.equal((await relay.post('/v1/open', { v: 1 })).status, 429);
+    await relay.now(t0 + TTL - 1);
+    assert.equal((await relay.post('/v1/open', { v: 1 })).status, 429);
+    await relay.now(t0 + TTL);
+    assert.equal((await relay.post('/v1/open', { v: 1 })).status, 200);
+  },
+  {
+    options: { ...CLOCK, limits: { live: 1 } },
+    mutants: [
+      {
+        name: 'live count held for the hour, not the deadline',
+        edits: [
+          [
+            'gate.js',
+            'COUNT(CASE WHEN expires > ? THEN 1 END) AS live',
+            'COUNT(CASE WHEN opened > ? - 3600000 THEN 1 END) AS live',
+          ],
+        ],
+      },
+      {
+        name: 'live count held past the deadline',
+        edits: [
+          [
+            'worker.js',
+            'body: JSON.stringify({ expiresAt }),',
+            'body: JSON.stringify({ expiresAt: expiresAt + 1000 }),',
+          ],
+        ],
+      },
+    ],
+  }
+);
+
+row(
+  'a torn put cannot happen: a failure before the meta write leaves no slot, no reservation and the caps intact',
+  async (relay) => {
+    const id = await relay.open();
+    const final = verified(token(1), { final: true, reserve: [slot(2), slot(3), slot(4)] });
+    assert.equal((await relay.put(id, slot(1), bytes(4096), final)).status, 503);
+    const [{ kv }] = relay.live('Mailbox');
+    assert.deepEqual(Object.keys(kv), ['meta']);
+    assert.equal(kv.meta.slots, 0);
+    assert.equal(kv.meta.total, 0);
+    assert.equal(kv.meta.final, null);
+  },
+  {
+    options: { edits: [CRASH_PUT] },
+    mutants: [{ name: 'put not transactional', edits: [CRASH_PUT, NO_PUT_TX] }],
+  }
+);
+
+const ALARM = 'await this.ctx.storage.setAlarm(expiresAt);';
+const ALARM_FAILS = ['mailbox.js', ALARM, "throw new Error('synthetic alarm failure');"];
+
+row(
+  'a failed setAlarm at open wipes the mailbox and answers 503',
+  async (relay) => {
+    const answer = await relay.post('/v1/open', { v: 1 });
+    assert.equal(answer.status, 503);
+    assert.deepEqual(answer.body, { v: 1, error: 'failed' });
+    assert.deepEqual(relay.live('Mailbox'), []);
+  },
+  {
+    options: { edits: [ALARM_FAILS] },
+    mutants: [
+      {
+        name: 'meta kept without an alarm',
+        edits: [
+          ALARM_FAILS,
+          [
+            'mailbox.js',
+            '} catch {\n      await this.wipe();\n      return refused();',
+            '} catch {\n      return refused();',
+          ],
+        ],
       },
     ],
   }

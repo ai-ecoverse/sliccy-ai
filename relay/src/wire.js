@@ -9,8 +9,8 @@ export const LIMITS = {
   requests: 400,
   refusals: 10,
   retryAfterMs: 1000,
-  live: 1000,
-  hourly: 3000,
+  live: 100,
+  hourly: 600,
   maxAge: 60,
 };
 
